@@ -10,7 +10,7 @@
     <RootNamespace>GDTracker</RootNamespace>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Product>GD Tracker</Product>
     <Description>Readable stats for the Geometry Dash Death Tracker mod</Description>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
