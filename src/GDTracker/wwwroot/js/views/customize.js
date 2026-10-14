@@ -1,9 +1,11 @@
 // Per-level customisation: thumbnail (file / paste / URL / drop / online), focal point, display name,
 // colour, tags, notes, favourite and hidden. Changes save as you make them.
-import { state, custom, setCustom, allTags, tagColor, levelInfo, on } from '../store.js';
+import { state, custom, setCustom, allTags, tagColor, levelInfo, LIST_NAMES, autoListRank, on } from '../store.js';
+import { LENGTHS } from '../data.js';
+import { openLinkEditor } from './links.js';
 import { thumbInner, thumbSource } from '../thumbs.js';
 import { icon } from '../icons.js';
-import { openSheet, toast, promptDialog, tagField, switchHtml } from '../ui.js';
+import { openSheet, toast, promptDialog, tagField, switchHtml, ratingControl } from '../ui.js';
 import { esc } from '../util.js';
 import { pickImageFiles, readClipboardSources, storeSource, extractSources, dragHasImages } from '../images.js';
 import { call } from '../rpc.js';
@@ -19,6 +21,7 @@ export function levelMenuItems(level, { open = false } = {}) {
     { label: c.fav ? 'Remove from favourites' : 'Add to favourites', icon: c.fav ? 'starFill' : 'star', action: () => setCustom(level.key, { fav: !c.fav }) },
     { label: 'Change thumbnail…', icon: 'image', action: () => pickThumbnail(level) },
     { label: 'Customise…', icon: 'palette', action: () => openCustomize(level) },
+    { label: level.isGroup ? `Linked copies (${level.members.length})…` : 'Link copies…', icon: 'link', action: () => openLinkEditor(level) },
     { label: c.hidden ? 'Show in gallery' : 'Hide from gallery', icon: c.hidden ? 'eye' : 'eyeSlash', action: () => setCustom(level.key, { hidden: !c.hidden }) },
     '-',
     ...(level.type !== 'editor' && level.id != null ? [
@@ -30,6 +33,12 @@ export function levelMenuItems(level, { open = false } = {}) {
     ...(info?.creator ? [{ label: `More by ${info.creator}`, icon: 'search', action: () => call('app.openUrl', { url: `https://gdbrowser.com/search/${encodeURIComponent(info.creator)}?user` }) }] : []),
   ];
 }
+
+const adjValue = (adj, k) => {
+  if (!adj) return '';
+  if (k === 'playtimeH') return adj.playtime ? +(adj.playtime / 3600).toFixed(2) : '';
+  return adj[k] ?? '';
+};
 
 /** Quick thumbnail picker (file dialog). */
 export async function pickThumbnail(level) {
@@ -52,7 +61,9 @@ async function setThumbFrom(level, source) {
 }
 
 export function openCustomize(level, { focus } = {}) {
+  level = state.levels.get(state.memberOf.get(level.key) || level.key) || level;
   const key = level.key;
+  const auto = autoListRank(level);
   const c = () => custom(key);
   const s = openSheet({
     size: 'lg',
@@ -78,6 +89,20 @@ export function openCustomize(level, { focus } = {}) {
         <div class="cust-fields">
           <label class="lbl">Display name</label>
           <div class="input-with-btn"><input class="field" data-f="name" value="${esc(c().name || '')}" placeholder="${esc(level.rawName)}" spellcheck="false"><button class="btn ghost icon-only" data-a="resetName" title="Use the original name">${icon('undo')}</button></div>
+          <label class="lbl">Enjoyment</label>
+          <div class="enjoy-slot"></div>
+          <label class="lbl">Difficulty placement</label>
+          <div class="placement">
+            <span class="auto-rank">${auto ? `${esc(LIST_NAMES[auto.source])} #${auto.source === 'aredl' ? auto.aredlPosition : auto.position}${auto.by === 'name' ? ' <small>matched by name</small>' : ''}` : '<span class="muted">Not on the Demonlist top 150 or AREDL</span>'}</span>
+            <span class="sp"></span>
+            <input class="field num-field" data-f="listPos" type="number" min="1" step="1" value="${esc(c().listPos || '')}" placeholder="Own #" title="Your own placement (overrides the lists). Sorts like a list position: lower = harder.">
+          </div>
+          <label class="field-row switch-row"><span>Not a list level <small>(ignore any list match)</small></span>${switchHtml('noList', !!c().noList)}</label>
+          <label class="lbl">Length</label>
+          <select class="field" data-f="length">
+            <option value="">Automatic${level.lengthCat != null && !level.lengthManual ? ` (${LENGTHS[level.lengthCat]})` : ''}</option>
+            ${LENGTHS.map((n, i) => `<option value="${i}" ${c().length !== undefined && +c().length === i ? 'selected' : ''}>${n}</option>`).join('')}
+          </select>
           <label class="lbl">Colour</label>
           <div class="swatches">
             <button class="sw auto ${!c().color ? 'on' : ''}" data-color="" title="App accent">${icon('xmark')}</button>
@@ -90,6 +115,15 @@ export function openCustomize(level, { focus } = {}) {
           <textarea class="field notes" data-f="notes" rows="5" placeholder="Strategies, goals, which start positions to grind…">${esc(c().notes || '')}</textarea>
           <label class="field-row switch-row"><span>${icon('star')}Favourite</span>${switchHtml('fav', !!c().fav)}</label>
           <label class="field-row switch-row"><span>${icon('eyeSlash')}Hide from gallery</span>${switchHtml('hidden', !!c().hidden)}</label>
+          <button class="btn ghost links-btn" data-a="links">${icon('link')}${level.isGroup ? `${level.members.length} linked copies…` : 'Link copies of this level…'}</button>
+          <details class="adjust" ${c().adjust ? 'open' : ''}>
+            <summary>Adjust stats</summary>
+            <p class="hint">Numbers added on top of what Death Tracker recorded — for practice you did before installing the mod.</p>
+            <div class="adjust-grid">
+              ${[['attempts', 'Attempts'], ['playtimeH', 'Playtime (hours)'], ['from0', 'From-0 attempts'], ['runs', 'Practice runs'], ['completions', 'Completions'], ['best', 'Best % from 0']].map(([k, label]) => `
+                <label><span>${label}</span><input class="field" type="number" min="0" step="${k === 'playtimeH' ? '0.1' : '1'}" ${k === 'best' ? 'max="100"' : ''} data-adj="${k}" value="${esc(adjValue(c().adjust, k))}"></label>`).join('')}
+            </div>
+          </details>
         </div>
       </div>
       <div class="sheet-foot"><span class="hint">Changes are saved automatically.</span><button class="btn primary" data-a="close">Done</button></div>`,
@@ -105,6 +139,22 @@ export function openCustomize(level, { focus } = {}) {
     onChange: (tags) => setCustom(key, { tags }),
   });
   q('.tags-slot').append(tf.el);
+
+  q('.enjoy-slot').append(ratingControl(c().enjoy || 0, (v) => setCustom(key, { enjoy: v || null })));
+  q('[data-f=listPos]').addEventListener('change', (e) => setCustom(key, { listPos: Math.max(0, Math.round(+e.target.value)) || null }));
+  q('input[name=noList]').addEventListener('change', (e) => setCustom(key, { noList: e.target.checked }));
+  q('[data-f=length]').addEventListener('change', (e) => setCustom(key, { length: e.target.value === '' ? null : +e.target.value }));
+  q('[data-a=links]').onclick = () => { s.close(); openLinkEditor(level); };
+  el.querySelectorAll('[data-adj]').forEach((inp) => inp.addEventListener('change', () => {
+    const adj = {};
+    el.querySelectorAll('[data-adj]').forEach((x) => {
+      if (x.value === '') return;
+      const v = Math.max(0, +x.value);
+      if (x.dataset.adj === 'playtimeH') adj.playtime = Math.round(v * 3600);
+      else adj[x.dataset.adj] = x.dataset.adj === 'best' ? Math.min(100, v) : Math.round(v);
+    });
+    setCustom(key, { adjust: Object.keys(adj).length ? adj : null });
+  }));
 
   q('[data-f=name]').addEventListener('input', (e) => setCustom(key, { name: e.target.value.trim() }));
   q('[data-a=resetName]').onclick = () => { q('[data-f=name]').value = ''; setCustom(key, { name: '' }); };

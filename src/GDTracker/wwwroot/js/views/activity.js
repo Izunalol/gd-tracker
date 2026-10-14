@@ -4,6 +4,7 @@ import { columnChart, calendarHeatmap, meter } from '../charts.js';
 import { thumbBox } from '../thumbs.js';
 import { icon } from '../icons.js';
 import { h, segmented } from '../ui.js';
+import { doneTick } from './gallery.js';
 import { esc, num, compact, duration, dayStart, dayLabel, dateTime, plural, debounce, absDate } from '../util.js';
 
 const RANGES = [
@@ -44,6 +45,7 @@ function render() {
     return;
   }
   const r = RANGES.find((x) => x.id === range);
+  const rangeLabel = r.days ? `last ${r.label.toLowerCase()}` : 'all time';
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const oldest = sessions[sessions.length - 1].s.start;
   const startMs = r.days ? addDays(today, -(r.days - 1)) : dayStart(oldest);
@@ -113,18 +115,19 @@ function render() {
   }
   const top = [...perLevel.values()].sort((a, b) => b.pt - a.pt).slice(0, 8);
   const maxPt = top[0]?.pt || 1;
-  row.append(h(`<div class="card-panel"><div class="panel-head"><h3>Most played</h3></div><div class="panel-body">
+  row.append(h(`<div class="card-panel"><div class="panel-head"><h3>Most played <small>${esc(rangeLabel)}</small></h3></div><div class="panel-body">
     <div class="toplist">${top.map((p) => `<a class="top-row" href="#/level/${encodeURIComponent(p.level.key)}">
       ${thumbBox(p.level, 'mini')}
       <span class="top-main"><span class="top-name">${esc(displayName(p.level))}</span>${meter(p.pt / maxPt)}</span>
-      <span class="top-v">${duration(p.pt)}<small>${compact(p.att)} att</small></span></a>`).join('')}</div>
+      <span class="top-v">${duration(p.pt)}<small>${r.days && Math.abs(p.level.playtime - p.pt) > 60 ? `of ${duration(p.level.playtime)} all-time` : `${compact(p.att)} att`}</small></span></a>`).join('')}</div>
+    ${r.days ? `<p class="hint">Playtime within the selected range (${esc(rangeLabel)}). A level page shows its all-time total.</p>` : ''}
   </div></div>`));
 
   const recent = inRange.slice(0, 12);
-  row.append(h(`<div class="card-panel"><div class="panel-head"><h3>Recent sessions</h3></div><div class="panel-body">
-    <div class="toplist">${recent.map((x) => `<a class="top-row" href="#/level/${encodeURIComponent(x.level.key)}/sessions">
+  row.append(h(`<div class="card-panel"><div class="panel-head"><h3>Recent sessions <small>${esc(rangeLabel)}</small></h3></div><div class="panel-body">
+    <div class="toplist">${recent.map((x) => `<a class="top-row ${x.s.sum.completions ? 'win' : ''}" href="#/level/${encodeURIComponent(x.level.key)}/sessions">
       ${thumbBox(x.level, 'mini')}
-      <span class="top-main"><span class="top-name">${esc(displayName(x.level))}${x.s.newRecord ? ` <span class="chip rec sm">${icon('trophy')}</span>` : ''}</span><span class="top-sub">${esc(dateTime(x.s.start))}</span></span>
+      <span class="top-main"><span class="top-name">${esc(displayName(x.level))}${x.s.sum.completions ? doneTick('Completed this session', 'xs') : x.s.newRecord ? ` <span class="chip rec sm" title="New best">${icon('trophy')}</span>` : ''}</span><span class="top-sub">${esc(dateTime(x.s.start))}</span></span>
       <span class="top-v">${duration(x.s.playtime)}<small>${num(x.s.sum.attempts)} att${x.s.sum.best != null ? ` · best ${esc(pctLabel(x.level, x.s.sum.best))}` : ''}</small></span></a>`).join('')}</div>
   </div></div>`));
 }

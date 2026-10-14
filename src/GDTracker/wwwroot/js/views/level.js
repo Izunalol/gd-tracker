@@ -4,9 +4,11 @@ import { TYPES, LENGTHS, percentTable, hardestParts, runGroups } from '../data.j
 import { thumbInner } from '../thumbs.js';
 import { columnChart, lineChart, meter } from '../charts.js';
 import { icon } from '../icons.js';
-import { h, showMenu, segmented } from '../ui.js';
+import { h, showMenu, segmented, ratingControl } from '../ui.js';
 import { esc, num, compact, duration, when, absDate, dateTime, shortDate, clockTime, pct, plural, debounce } from '../util.js';
-import { diffChip } from './gallery.js';
+import { diffChip, rankChip, rankText, doneTick } from './gallery.js';
+import { openLinkEditor } from './links.js';
+import { call } from '../rpc.js';
 import { openCustomize, levelMenuItems } from './customize.js';
 
 const TABS = [
@@ -14,7 +16,7 @@ const TABS = [
   { id: 'sessions', label: 'Sessions', icon: 'calendar' },
   { id: 'practice', label: 'Practice', icon: 'flag' },
   { id: 'percent', label: 'Percentages', icon: 'target' },
-  { id: 'notes', label: 'Notes', icon: 'doc' },
+  { id: 'notes', label: 'About & notes', icon: 'doc' },
 ];
 
 let root = null, key = null, tab = 'overview', scope = 'all', unsub = [];
@@ -47,7 +49,11 @@ export function unmountLevel() {
   root = null;
 }
 
-const lvl = () => state.levels.get(key);
+// A link may have folded this level into another one since the URL was made; follow it.
+const lvl = () => {
+  if (!state.levels.has(key) && state.memberOf.has(key)) key = state.memberOf.get(key);
+  return state.levels.get(key);
+};
 
 /** Data for the current scope: all-time or one session. */
 function scoped(level) {
@@ -89,8 +95,9 @@ function hero(level) {
   if (info?.creator) meta.push(`by <b>${esc(info.creator)}</b>`);
   if (level.type !== 'online') meta.push(esc(TYPES[level.type]));
   if (level.id != null && level.type !== 'editor') meta.push(`ID ${level.id}`);
+  if (level.lengthCat != null) meta.push(`${esc(LENGTHS[level.lengthCat])}${level.lengthManual ? ' <small title="Set by you">✎</small>' : ''}`);
+  if (level.isGroup) meta.push(`<button class="linkish" data-a="links">${icon('link')}${level.members.length} linked copies</button>`);
   if (info && !info.missing) {
-    if (info.length != null) meta.push(esc(LENGTHS[info.length] || ''));
     if (info.song) meta.push(`${icon('play')}${esc(info.song)}${info.songArtist ? ` – ${esc(info.songArtist)}` : ''}`);
   }
   if (displayName(level) !== level.rawName) meta.push(`<span class="muted">originally “${esc(level.rawName)}”</span>`);
@@ -109,14 +116,17 @@ function hero(level) {
       <div class="hero-main">
         <button class="hero-thumb thumb hd" data-thumb-key="${esc(level.key)}" data-a="thumb" title="Change thumbnail">${thumbInner(level, { hd: true })}</button>
         <div class="hero-text">
-          <div class="hero-kicker">${diffChip(level)}${isCompleted(level) ? `<span class="chip done">${icon('check')}Completed</span>` : ''}${level.error ? `<span class="chip warn" title="${esc(level.error)}">Partially unreadable</span>` : ''}</div>
+          <div class="hero-kicker">${diffChip(level)}${rankChip(level)}${isCompleted(level) ? `<span class="chip done glow">${icon('check')}Completed${level.sum.completions > 1 ? ` ${level.sum.completions}×` : ''}</span>` : ''}${level.error ? `<span class="chip warn" title="${esc(level.error)}">Partially unreadable</span>` : ''}</div>
           <h1>${esc(displayName(level))}</h1>
           <div class="hero-meta">${meta.map((m) => `<span>${m}</span>`).join('<span class="dot">·</span>')}</div>
+          <div class="hero-rate"><span class="enjoy-slot"></span><span class="enjoy-lbl">Enjoyment</span></div>
           ${tags ? `<div class="hero-tags">${tags}</div>` : ''}
         </div>
       </div>
     </div>
   </div>`);
+  el.querySelector('.enjoy-slot').append(ratingControl(c.enjoy || 0, (v) => setCustom(level.key, { enjoy: v || null }), { size: 'lg' }));
+  el.querySelector('[data-a=links]')?.addEventListener('click', () => openLinkEditor(level));
   el.querySelector('[data-a=fav]').onclick = () => setCustom(level.key, { fav: !c.fav });
   el.querySelector('[data-a=customize]').onclick = () => openCustomize(level);
   el.querySelector('[data-a=thumb]').onclick = () => openCustomize(level, { focus: 'thumb' });
@@ -131,8 +141,10 @@ function tiles(level) {
   const longest = s.longest;
   const t = (label, value, sub = '', extra = '') => `<div class="tile"><div class="tile-label">${label}</div><div class="tile-value">${value}</div>${sub ? `<div class="tile-sub">${sub}</div>` : ''}${extra}</div>`;
   return h(`<div class="tiles">
-    ${t('Attempts', num(level.attempts), level.gdAttempts ? 'GD attempt counter' : 'tracked attempts')}
-    ${t('Playtime', duration(level.playtime), `${duration(level.playtimeF0)} from 0 · ${duration(level.playtimeRuns)} practice`)}
+    ${t('Attempts', num(level.attempts), (level.isGroup ? `across ${level.members.length} copies` : level.gdAttempts ? 'GD attempt counter' : 'tracked attempts') + (level.adjust ? ' · <span title="Includes numbers you added in Customise → Adjust stats">+ manual</span>' : ''))}
+    ${level.playtime > 0 || !level.attempts
+      ? t('Playtime', duration(level.playtime), `${duration(level.playtimeF0)} from 0 · ${duration(level.playtimeRuns)} practice`)
+      : t('Playtime', '–', 'not recorded (older Death Tracker data)')}
     ${t('Best from 0', esc(pctLabel(level, s.best)), s.completions ? plural(s.completions, 'completion') : 'not completed yet', meter(best / 100, s.completions ? 'done' : ''))}
     ${t('From-0 attempts', num(s.from0), s.from0 && level.playtimeF0 ? `≈ ${duration(level.playtimeF0 / s.from0)} each` : '')}
     ${t('Practice runs', num(s.runs), longest ? `longest ${esc(pctLabel(level, longest.s))} → ${esc(pctLabel(level, longest.e))}` : '')}
@@ -206,8 +218,8 @@ function overview(body, level) {
       yFmt: (v) => `${v}%`,
       xFmt: (x) => shortDate(chron[x].start),
       points: chron.map((x, i) => ({
-        x: i, y: x.sum.best ?? 0, hl: x.newRecord,
-        tip: `<div class="tt-title">${esc(dateTime(x.start))}</div>Best <b>${esc(pctLabel(level, x.sum.best))}</b>${x.newRecord ? ' · new record' : ''}<br>${num(x.sum.from0)} from-0 attempts · ${duration(x.playtime)}`,
+        x: i, y: x.sum.best ?? 0, hl: x.newRecord, cls: x.sum.completions ? 'win' : '',
+        tip: `<div class="tt-title">${esc(dateTime(x.start))}</div>${x.sum.completions ? `<span class="tt-win">${icon('check')}Completed${x.sum.completions > 1 ? ` ${x.sum.completions}×` : ''}</span><br>` : ''}Best <b>${esc(pctLabel(level, x.sum.best))}</b>${x.newRecord && !x.sum.completions ? ' · new record' : ''}<br>${num(x.sum.from0)} from-0 attempts · ${duration(x.playtime)}`,
       })),
       onClick: (p) => { scope = String(chron[p.x].start); tab = 'overview'; render(true); },
     });
@@ -227,10 +239,11 @@ function overview(body, level) {
     <div class="legend">${segs.map((x) => `<span><i style="background:${x.c}"></i>${x.label} <b>${duration(x.v)}</b> <small>${pct(x.v / tot)}</small></span>`).join('')}</div>
     <p class="hint">Playtime elsewhere in the app ${s.playtimeDead ? 'includes' : 'excludes'} respawn time and ${s.playtimePaused ? 'includes' : 'excludes'} paused time (change in Settings).</p>`, '', 'wide'));
 
-  // Linked levels
-  if (level.linked.length) {
-    const links = level.linked.map((k) => state.levels.get(k)).filter(Boolean);
-    if (links.length) body.append(card('Linked levels', `<div class="links">${links.map((l) => `<a class="link-chip" href="#/level/${encodeURIComponent(l.key)}">${esc(displayName(l))}<small>${num(l.attempts)} att · ${duration(l.playtime)}</small></a>`).join('')}</div>`, '', 'wide'));
+  // Linked copies
+  if (level.isGroup) {
+    const panel = card('Linked copies <small>stats above combine all of them</small>', `<div class="links">${level.members.map((m) => `<div class="link-chip">${esc(m.rawName)}${m.key === level.key ? ' <span class="chip sm">main</span>' : ''}<small>${esc(TYPES[m.type])} · ${num(m.attempts)} att · ${duration(m.playtime)} · best ${esc(pctLabel(level, m.sum.best))}</small></div>`).join('')}</div>`, `<button class="btn sm" data-a="links">${icon('link')}Manage</button>`, 'wide');
+    panel.querySelector('[data-a=links]').onclick = () => openLinkEditor(level);
+    body.append(panel);
   }
 }
 
@@ -292,15 +305,17 @@ function sessions(body, level) {
   const tb = tbl.querySelector('tbody');
   for (const s of sorted) {
     const open = expanded.has('s' + s.start);
-    const tr = h(`<table><tr class="srow ${open ? 'open' : ''}" data-s="${s.start}">
+    const win = s.sum.completions > 0;
+    const copy = level.isGroup ? level.members.find((m) => m.key === s.member) : null;
+    const tr = h(`<table><tr class="srow ${open ? 'open' : ''} ${win ? 'win' : ''}" data-s="${s.start}">
       <td class="exp">${icon(open ? 'chevronDown' : 'chevronRight')}</td>
-      <td><div class="s-date">${esc(dateTime(s.start))}${s.newRecord ? `<span class="chip rec" title="New all-time best this session">${icon('trophy')}New best</span>` : ''}</div>
-        <div class="s-sub">${s.last - s.start > 60 ? `${esc(clockTime(s.start))} – ${esc(clockTime(s.last))}` : ''}</div></td>
+      <td><div class="s-date">${esc(dateTime(s.start))}${win ? doneTick(s.sum.completions > 1 ? `Completed ${s.sum.completions}× this session` : 'Completed this session', 'sm') : s.newRecord ? `<span class="chip rec" title="New all-time best this session">${icon('trophy')}New best</span>` : ''}</div>
+        <div class="s-sub">${s.last - s.start > 60 ? `${esc(clockTime(s.start))} – ${esc(clockTime(s.last))}` : ''}${copy ? `<span class="copy-tag" title="Played on this copy">${esc(copy.rawName)}</span>` : ''}</div></td>
       <td class="num">${duration(s.playtime)}</td>
       <td class="num">${num(s.sum.attempts)}</td>
       <td class="num">${num(s.sum.from0)}</td>
       <td class="num">${num(s.sum.runs)}</td>
-      <td class="num">${s.sum.best != null ? esc(pctLabel(level, s.sum.best)) : '–'}${s.sum.completions ? ` <span class="chip done sm">${icon('check')}${s.sum.completions > 1 ? s.sum.completions : ''}</span>` : ''}</td>
+      <td class="num">${s.sum.best != null ? esc(pctLabel(level, s.sum.best)) : '–'}</td>
       <td class="num">${s.sum.longest ? `${esc(pctLabel(level, s.sum.longest.s))}→${esc(pctLabel(level, s.sum.longest.e))}` : '–'}</td>
       <td class="act"><button class="btn ghost sm" data-view="${s.start}" title="Show this session in the charts">${icon('chart')}</button></td>
     </tr></table>`).querySelector('tr');
@@ -346,8 +361,8 @@ function sessions(body, level) {
 function runList(level, runs, n) {
   if (!runs.length) return '<p class="muted">None.</p>';
   const top = [...runs].sort((a, b) => (b.e - b.s) - (a.e - a.s) || b.e - a.e).slice(0, n);
-  return `<div class="runs">${top.map((r) => `<div class="run" title="${num(r.n)}×">
-    <span class="run-k">${esc(pctLabel(level, r.s))} → ${esc(pctLabel(level, r.e))}</span>
+  return `<div class="runs">${top.map((r) => `<div class="run ${r.e >= 100 ? 'win' : ''}" title="${num(r.n)}×">
+    <span class="run-k">${esc(pctLabel(level, r.s))} → ${esc(pctLabel(level, r.e))}${r.e >= 100 ? doneTick('Ran to the end', 'xs') : ''}</span>
     <span class="run-bar"><i style="left:${r.s}%;width:${Math.max(1, r.e - r.s)}%"></i></span>
     <span class="run-n">×${num(r.n)}</span></div>`).join('')}</div>`;
 }
@@ -376,13 +391,13 @@ function practice(body, level) {
   const tb = tbl.querySelector('tbody');
   for (const g of groups) {
     const open = expanded.has('p' + g.start);
-    tb.append(h(`<table><tr class="prow ${open ? 'open' : ''}" data-p="${g.start}">
+    tb.append(h(`<table><tr class="prow ${open ? 'open' : ''} ${g.completions ? 'win' : ''}" data-p="${g.start}">
       <td class="exp">${icon(open ? 'chevronDown' : 'chevronRight')}</td>
       <td><b>${esc(pctLabel(level, g.start))}</b></td>
       <td class="num">${num(g.count)}</td>
       <td class="num">${esc(pctLabel(level, g.bestEnd))}</td>
       <td class="num">${g.avgEnd.toFixed(1)}${isPlatformer(level) ? '' : '%'}</td>
-      <td class="num">${g.completions ? num(g.completions) : '–'}</td>
+      <td class="num">${g.completions ? `${num(g.completions)}${doneTick('Ran to the end from here', 'sm')}` : '–'}</td>
       <td class="range-col"><span class="run-bar"><i class="avg" style="left:${g.start}%;width:${Math.max(0.5, g.avgEnd - g.start)}%"></i><i style="left:${g.start}%;width:${Math.max(0.5, g.bestEnd - g.start)}%"></i></span></td>
     </tr></table>`).querySelector('tr'));
     if (open) {
@@ -447,9 +462,30 @@ function notes(body, level) {
   const ta = panel.querySelector('textarea');
   ta.addEventListener('input', debounce(() => setCustom(level.key, { notes: ta.value }), 300));
   body.append(panel);
+  const r = level.list;
+  const pc = r?.source === 'pointercrate' ? r.entry : null;
+  const ar = r?.aredl || (r?.source === 'aredl' ? r.entry : null);
+  if (r) {
+    const facts = [
+      ['Placement', rankText(r) + (r.by === 'name' ? ' — matched by name' : '')],
+      pc ? ['Demonlist', `${pc.position <= 75 ? 'Main list' : 'Extended list'} · list% ${pc.requirement ?? '–'}%`] : null,
+      pc?.verifier ? ['Verifier', pc.verifier] : null,
+      pc?.publisher ? ['Publisher', pc.publisher] : null,
+      ar ? ['AREDL', `#${ar.position}${ar.points ? ` · ${num(ar.points)} points` : ''}${ar.legacy ? ' · legacy' : ''}`] : null,
+      +ar?.enjoyment > 0 ? ['Community enjoyment', `${(+ar.enjoyment).toFixed(1)} / 100 (EDEL)`] : null,
+      ar?.gddlTier != null ? ['GDDL tier', `Tier ${(+ar.gddlTier).toFixed(1).replace(/\.0$/, '')}`] : null,
+      ar?.tags?.length ? ['Tags', ar.tags.join(', ')] : null,
+    ].filter(Boolean);
+    const video = pc?.video;
+    const listCard = card('On the lists', `<dl class="facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+      ${r.source === 'manual' ? '<p class="hint">This is your own placement (set in Customise).</p>' : ''}`,
+      video ? `<button class="btn sm" data-a="video">${icon('play')}Verification</button>` : '', 'wide');
+    listCard.querySelector('[data-a=video]')?.addEventListener('click', () => call('app.openUrl', { url: video }));
+    body.append(listCard);
+  }
   if (info && !info.missing) {
     const facts = [
-      ['Creator', info.creator], ['Stars', info.stars || '–'], ['Length', LENGTHS[info.length]],
+      ['Creator', info.creator], ['Stars', info.stars || '–'], ['Length', LENGTHS[level.lengthCat ?? info.length]],
       ['Song', info.song ? `${info.song}${info.songArtist ? ` – ${info.songArtist}` : ''}` : null],
       ['Downloads', num(info.downloads)], ['Likes', num(info.likes)], ['Objects', info.objects ? num(info.objects) : null],
       ['Coins', info.coins ? `${info.coins}${info.verifiedCoins ? ' (verified)' : ''}` : null],

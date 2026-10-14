@@ -1,6 +1,7 @@
 // Settings: appearance, gallery cards, data source, online extras, formats, backup.
 import { state, settings, setSettings, loadAll, fetchOnline, clearThumbCache, replacePrefs, DEFAULT_SETTINGS, on } from '../store.js';
 import { CARD_STATS } from './gallery.js';
+import { openSuggestions } from './links.js';
 import { SWATCHES } from './customize.js';
 import { icon } from '../icons.js';
 import { toast, confirmDialog } from '../ui.js';
@@ -23,7 +24,7 @@ export function mountSettings(el) {
   root = el;
   render();
   // Only re-render for changes that alter the page layout; re-rendering mid-drag would drop the slider.
-  const structural = ['bgType', 'bgImage', 'dataPath', 'online'];
+  const structural = ['bgType', 'bgImage', 'dataPath', 'online', 'lists'];
   const rerender = debounce(() => render(true), 50);
   unsub = [on('prefs', (patch) => { if (!patch || structural.some((k) => k in patch) || patch.accent === undefined && Object.keys(patch).length > 3) rerender(); })];
 }
@@ -62,6 +63,7 @@ function render(keep = false) {
       ${row('Stats on cards', '', `<div class="checks">${CARD_STATS.map((c) => `<label class="check"><input type="checkbox" data-stat="${c.id}" ${s.cardStats[c.id] ? 'checked' : ''}>${icon(c.icon)}${esc(c.label)}</label>`).join('')}</div>`)}
       ${row('Best-% progress bar', '', toggle('showProgress', s.showProgress))}
       ${row('Difficulty badge', '', toggle('showDifficulty', s.showDifficulty))}
+      ${row('List placement chip', 'Shows #position from the Demonlist or AREDL on cards.', toggle('showListRank', s.showListRank))}
       ${row('Creator name', '', toggle('showCreator', s.showCreator))}
       ${row('Summary tiles above the gallery', '', toggle('showSummary', s.showSummary))}
       ${row('Favourites first', 'Keep starred levels at the top whatever the sort.', toggle('pinFavorites', s.pinFavorites))}
@@ -75,6 +77,8 @@ function render(keep = false) {
       ${row('Live refresh', 'Update the app as you play (the mod writes when you leave a level).', toggle('liveRefresh', s.liveRefresh))}
       ${row('Count respawn time as playtime', 'The short pause after each death.', toggle('playtimeDead', s.playtimeDead))}
       ${row('Count paused time as playtime', 'Time in the pause menu and on the level-complete screen.', toggle('playtimePaused', s.playtimePaused))}
+      ${row('Suggest linking copies', 'Spot levels that look like copies of each other (start-pos, editor copies…).', `${toggle('suggestLinks', s.suggestLinks)}<button class="btn" data-a="reviewLinks">${icon('link')}Review now</button>`)}
+      ${row('Forget dismissed suggestions', `${state.prefs.dismissedLinks.length} dismissed.`, `<button class="btn" data-a="resetDismissed" ${state.prefs.dismissedLinks.length ? '' : 'disabled'}>Reset</button>`)}
       ${row('Hide 0% deaths in charts', 'Instant restarts often pile up at 0%.', toggle('hideZeroPercent', s.hideZeroPercent))}
       ${row('', '', `<button class="btn" data-a="reload">${icon('refresh')}Reload data now</button>`)}
     </section>
@@ -82,6 +86,8 @@ function render(keep = false) {
     <section class="set-group">
       <h2>${icon('globe')}Online extras</h2>
       ${row('Level info', 'Creator, stars, song and length from the Geometry Dash servers.', toggle('online', s.online))}
+      ${row('Demon lists', 'Placements from Pointercrate (top 150) and AREDL, used for difficulty sorting and the Lists page.', toggle('lists', s.lists))}
+      ${row('Match copies to list levels by name', 'Lets editor and start-pos copies (which have their own IDs) pick up the original level’s placement.', toggle('matchListByName', s.matchListByName))}
       ${row('Automatic thumbnails', 'From the Level Thumbnails mod’s server, for levels without a custom image.', toggle('autoThumbs', s.autoThumbs))}
       ${row('', '', `<div class="row-btns"><button class="btn" data-a="refreshInfo" ${s.online ? '' : 'disabled'}>${icon('refresh')}Refresh level info</button><button class="btn ghost" data-a="clearThumbs">${icon('trash')}Clear thumbnail cache</button></div>`)}
     </section>
@@ -162,6 +168,8 @@ function wire() {
     toast('Backup restored');
   });
   act('dataFolder', () => call('app.openDataFolder'));
+  act('reviewLinks', () => openSuggestions());
+  act('resetDismissed', () => { state.prefs.dismissedLinks = []; setSettings({}); render(true); toast('Suggestions reset'); });
   act('collect', async () => {
     const keep = Object.values(state.prefs.levels).map((c) => c.thumb).filter(Boolean);
     if (s.bgImage) keep.push(s.bgImage);

@@ -10,6 +10,7 @@ import { mountGallery, unmountGallery } from './views/gallery.js';
 import { mountLevel, unmountLevel } from './views/level.js';
 import { mountActivity, unmountActivity } from './views/activity.js';
 import { mountSettings, unmountSettings, FONTS } from './views/settings.js';
+import { mountLists, unmountLists } from './views/lists.js';
 
 const content = document.getElementById('content');
 let current = null;
@@ -59,6 +60,7 @@ function topbar() {
     <a class="brand" href="#/"><span class="logo"></span><span>GD Tracker</span></a>
     <nav>
       <a href="#/" data-nav="levels">${icon('grid')}<span>Levels</span></a>
+      <a href="#/lists" data-nav="lists">${icon('trophy')}<span>Lists</span></a>
       <a href="#/activity" data-nav="activity">${icon('chart')}<span>Activity</span></a>
       <a href="#/settings" data-nav="settings">${icon('gear')}<span>Settings</span></a>
     </nav>
@@ -108,6 +110,10 @@ function route() {
     updateNav('activity');
     mountActivity(page);
     current = unmountActivity;
+  } else if (parts[0] === 'lists') {
+    updateNav('lists');
+    mountLists(page);
+    current = unmountLists;
   } else if (parts[0] === 'settings') {
     updateNav('settings');
     mountSettings(page);

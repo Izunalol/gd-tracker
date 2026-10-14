@@ -184,7 +184,7 @@ export function lineChart(el, opts) {
     svg += `<path class="line" d="${d}"/>`;
     if (dots && pts.length <= 120) {
       points.forEach((p, i) => {
-        svg += `<circle class="dot ${p.hl ? 'hl' : ''}" cx="${pts[i][0]}" cy="${pts[i][1]}" r="${p.hl ? 5 : 3.5}"/>`;
+        svg += `<circle class="dot ${p.cls || (p.hl ? 'hl' : '')}" cx="${pts[i][0]}" cy="${pts[i][1]}" r="${p.hl || p.cls ? 5 : 3.5}"/>`;
       });
     }
     svg += `<line class="crosshair" x1="0" x2="0" y1="${pad.t}" y2="${pad.t + ph}" visibility="hidden"/><circle class="focus" r="5" visibility="hidden"/></svg>`;

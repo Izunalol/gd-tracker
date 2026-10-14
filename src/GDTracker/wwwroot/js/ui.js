@@ -493,3 +493,51 @@ export function tagField({ value = [], placeholder = 'Add tags…', suggestions 
   };
 }
 
+
+/**
+ * Enjoyment rating: five stars with half steps, value 0–10 (0 = unrated). Click the current value
+ * again to clear it. Returns an element with a .value property.
+ */
+export function ratingControl(value, onChange, { size = '' } = {}) {
+  const el = h(`<div class="rating ${size}" role="slider" aria-label="Enjoyment" aria-valuemin="0" aria-valuemax="10" tabindex="0"></div>`);
+  let v = +value || 0;
+  const render = (hover = 0) => {
+    const shown = hover || v;
+    el.innerHTML = [1, 2, 3, 4, 5].map((n) => {
+      const fill = shown >= n * 2 ? 'full' : shown === n * 2 - 1 ? 'half' : '';
+      return `<span class="star ${fill} ${hover ? 'hover' : ''}" data-n="${n}">${icon('star')}<span class="star-fill">${icon('starFill')}</span></span>`;
+    }).join('') + `<span class="rating-val">${shown ? (shown / 2).toFixed(shown % 2 ? 1 : 0) : ''}</span>`;
+    el.setAttribute('aria-valuenow', v);
+  };
+  const valueAt = (e) => {
+    const s = e.target.closest('.star');
+    if (!s) return 0;
+    const r = s.getBoundingClientRect();
+    return +s.dataset.n * 2 - (e.clientX - r.left < r.width / 2 ? 1 : 0);
+  };
+  el.addEventListener('click', (e) => {
+    const n = valueAt(e);
+    if (!n) return;
+    v = v === n ? 0 : n;
+    render();
+    onChange?.(v);
+  });
+  el.addEventListener('mousemove', (e) => { const n = valueAt(e); if (n) render(n); });
+  el.addEventListener('mouseleave', () => render());
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      v = Math.max(0, Math.min(10, v + (e.key === 'ArrowRight' ? 1 : -1)));
+      render(); onChange?.(v);
+    }
+  });
+  render();
+  Object.defineProperty(el, 'value', { get: () => v, set: (n) => { v = +n || 0; render(); } });
+  return el;
+}
+
+/** Read-only stars for a 0–10 value. */
+export function starsHtml(value) {
+  const v = +value || 0;
+  return `<span class="stars-ro">${[1, 2, 3, 4, 5].map((n) => `<span class="star ${v >= n * 2 ? 'full' : v === n * 2 - 1 ? 'half' : ''}">${icon('star')}<span class="star-fill">${icon('starFill')}</span></span>`).join('')}</span>`;
+}

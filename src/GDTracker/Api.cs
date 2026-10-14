@@ -88,6 +88,8 @@ public sealed class Api
                 bool hd = Json.Get(p, "hd", false);
                 return await Task.Run(() => GdOnline.Thumb(id, hd));
             }
+            case "lists.get":
+                return await DemonLists.Get(Json.Get(p, "name", ""), Json.Get(p, "force", false), Json.Get(p, "online", true));
             case "thumbs.clearCache":
                 GdOnline.ClearThumbCache();
                 return true;

@@ -1,13 +1,14 @@
 // Home page: every tracked level as a card (or a table row), with search, sort, filters and grouping.
-import { state, settings, setSettings, custom, setCustom, displayName, levelInfo, levelDifficulty, pctLabel, isCompleted, allTags, tagColor, on } from '../store.js';
-import { diffInfo, DIFF_ORDER, TYPES } from '../data.js';
+import { state, settings, setSettings, custom, setCustom, displayName, levelInfo, levelDifficulty, pctLabel, isCompleted, allTags, tagColor, hardness, linkSuggestions, LIST_NAMES, on } from '../store.js';
+import { diffInfo, DIFF_ORDER, TYPES, LENGTHS } from '../data.js';
 import { thumbBox } from '../thumbs.js';
 import { meter } from '../charts.js';
 import { icon } from '../icons.js';
-import { h, showMenu, toast } from '../ui.js';
+import { h, showMenu, toast, starsHtml } from '../ui.js';
 import { esc, num, compact, duration, when, absDate, collator, debounce, plural, toCSV } from '../util.js';
 import { dragHasImages, extractSources, storeSource } from '../images.js';
 import { levelMenuItems } from './customize.js';
+import { openSuggestions } from './links.js';
 import { call } from '../rpc.js';
 
 export const SORTS = [
@@ -16,7 +17,9 @@ export const SORTS = [
   { id: 'playtime', label: 'Playtime', get: (l) => l.playtime, dir: 'desc' },
   { id: 'best', label: 'Best %', get: (l) => l.sum.best ?? -1, dir: 'desc' },
   { id: 'name', label: 'Name', get: (l) => displayName(l), dir: 'asc', text: true },
-  { id: 'difficulty', label: 'Difficulty', get: (l) => diffInfo(levelDifficulty(l)).rank, dir: 'desc' },
+  { id: 'difficulty', label: 'Difficulty', get: hardness, dir: 'desc' },
+  { id: 'enjoyment', label: 'Enjoyment', get: (l) => custom(l.key).enjoy || 0, dir: 'desc' },
+  { id: 'length', label: 'Length', get: (l) => l.lengthCat ?? -1, dir: 'desc' },
   { id: 'from0', label: 'From-0 attempts', get: (l) => l.sum.from0, dir: 'desc' },
   { id: 'practice', label: 'Practice runs', get: (l) => l.sum.runs, dir: 'desc' },
   { id: 'sessions', label: 'Sessions', get: (l) => l.sessions.length, dir: 'desc' },
@@ -30,6 +33,8 @@ const GROUPS = [
   { id: 'status', label: 'Completed / in progress' },
   { id: 'type', label: 'Level type' },
   { id: 'tag', label: 'Tag' },
+  { id: 'list', label: 'Demon list' },
+  { id: 'length', label: 'Length' },
   { id: 'month', label: 'Month last played' },
 ];
 
@@ -42,6 +47,8 @@ const CARD_STATS = [
   { id: 'practice', label: 'Practice runs', icon: 'flag', val: (l) => compact(l.sum.runs) },
   { id: 'sessions', label: 'Sessions', icon: 'layers', val: (l) => num(l.sessions.length) },
   { id: 'completions', label: 'Completions', icon: 'checkCircle', val: (l) => num(l.sum.completions) },
+  { id: 'enjoyment', label: 'Enjoyment', icon: 'star', val: (l) => (custom(l.key).enjoy ? `${(custom(l.key).enjoy / 2).toFixed(custom(l.key).enjoy % 2 ? 1 : 0)}/5` : '–') },
+  { id: 'length', label: 'Length', icon: 'clock', val: (l) => (l.lengthCat != null ? LENGTHS[l.lengthCat] : '–') },
 ];
 export { CARD_STATS };
 
@@ -60,6 +67,7 @@ export function mountGallery(el) {
     on('info', rerender),
     on('prefs', rerender),
     on('custom', rerender),
+    on('links', rerender),
   ];
   el.parentElement.scrollTop = scrollMemory;
 }
@@ -77,7 +85,7 @@ function matches(l, q) {
   if (!q) return true;
   const info = levelInfo(l);
   const c = custom(l.key);
-  const hay = [displayName(l), l.rawName, l.id, info?.creator, info?.song, ...(c.tags || [])].join(' ').toLowerCase();
+  const hay = [displayName(l), ...l.members.map((m) => m.rawName), l.id, info?.creator, info?.song, ...(c.tags || []), l.list ? `#${l.list.position}` : ''].join(' ').toLowerCase();
   return q.split(/\s+/).every((w) => hay.includes(w));
 }
 
@@ -93,6 +101,10 @@ export function visibleLevels() {
     if (s.filterFav && !c.fav) return false;
     if (s.filterDiff.length && !s.filterDiff.includes(levelDifficulty(l))) return false;
     if (s.filterTags.length && !s.filterTags.some((t) => (c.tags || []).includes(t))) return false;
+    if (s.filterList === 'any' && !l.list) return false;
+    if (s.filterList === 'none' && l.list) return false;
+    if (['pointercrate', 'aredl', 'manual'].includes(s.filterList) && l.list?.source !== s.filterList) return false;
+    if (s.filterLength.length && !s.filterLength.includes(l.lengthCat ?? -1)) return false;
     return matches(l, q);
   });
   const sort = SORTS.find((x) => x.id === s.sort) || SORTS[0];
@@ -130,6 +142,15 @@ function groupLevels(list) {
       const tags = custom(l.key).tags || [];
       if (!tags.length) add('~', 'Untagged', l, 'zzzz');
       for (const t of tags) add('t:' + t, t, l, t.toLowerCase());
+    } else if (g === 'list') {
+      const r = l.list;
+      if (!r) add('none', 'Not on a list', l, 9);
+      else if (r.source === 'pointercrate') add(r.position <= 75 ? 'main' : 'ext', r.position <= 75 ? 'Demonlist · main list (1–75)' : 'Demonlist · extended list (76–150)', l, r.position <= 75 ? 0 : 1);
+      else if (r.source === 'aredl') add('aredl', 'AREDL', l, 2);
+      else add('manual', 'Manual placement', l, 3);
+    } else if (g === 'length') {
+      const i = l.lengthCat ?? -1;
+      add(i, i >= 0 ? LENGTHS[i] : 'Unknown length', l, -i);
     } else if (g === 'month') {
       const d = new Date(l.lastPlayed * 1000);
       add(d.getFullYear() * 12 + d.getMonth(), d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }), l, -(d.getFullYear() * 12 + d.getMonth()));
@@ -157,6 +178,15 @@ function render(keepScroll = false) {
   if (state.loadError || !state.folderExists || total === 0) { root.append(emptyState()); return; }
 
   if (s.showSummary) root.append(summary(list));
+  const sugg = s.suggestLinks ? linkSuggestions() : [];
+  if (sugg.length) {
+    const n = sugg.reduce((a, x) => a + x.levels.length, 0);
+    const banner = h(`<div class="banner">${icon('link')}<div><b>${plural(sugg.length, 'level')} ${sugg.length === 1 ? 'seems' : 'seem'} to have copies</b><span>${n} tracked levels look like copies of each other (same name, start-pos or editor copies). Linking combines their stats and thumbnail.</span></div>
+      <span class="sp"></span><button class="btn primary" data-a="review">Review</button><button class="btn ghost icon-only" data-a="hide" title="Don't suggest links">${icon('xmark')}</button></div>`);
+    banner.querySelector('[data-a=review]').onclick = () => openSuggestions();
+    banner.querySelector('[data-a=hide]').onclick = () => { setSettings({ suggestLinks: false }); toast('Link suggestions turned off — turn them back on in Settings'); };
+    root.append(banner);
+  }
   root.append(toolbar(list.length, total));
 
   if (!list.length) {
@@ -164,7 +194,7 @@ function render(keepScroll = false) {
       <button class="btn" data-a="clear">Clear search & filters</button></div>`));
     root.querySelector('[data-a=clear]').onclick = () => {
       query = '';
-      setSettings({ filterType: 'all', filterStatus: 'all', filterFav: false, filterDiff: [], filterTags: [] });
+      setSettings({ filterType: 'all', filterStatus: 'all', filterFav: false, filterDiff: [], filterTags: [], filterList: 'all', filterLength: [] });
     };
     return;
   }
@@ -185,19 +215,41 @@ function summary(list) {
   const att = list.reduce((a, l) => a + l.attempts, 0);
   const done = list.filter(isCompleted).length;
   const recent = list.reduce((a, l) => Math.max(a, l.lastPlayed), 0);
-  return h(`<div class="summary">
-    <div class="tile"><div class="tile-label">Levels</div><div class="tile-value">${num(list.length)}</div></div>
+  const hardest = list.filter(isCompleted).sort((a, b) => hardness(b) - hardness(a))[0];
+  const el = h(`<div class="summary">
     <div class="tile"><div class="tile-label">Playtime</div><div class="tile-value">${duration(pt)}</div></div>
     <div class="tile"><div class="tile-label">Attempts</div><div class="tile-value">${compact(att)}</div></div>
     <div class="tile"><div class="tile-label">Completed</div><div class="tile-value">${num(done)}<small> / ${num(list.length)}</small></div></div>
+    ${hardest ? `<a class="tile link" href="#/level/${encodeURIComponent(hardest.key)}"><div class="tile-label">Hardest completed</div><div class="tile-value sm">${esc(displayName(hardest))}</div><div class="tile-sub">${hardest.list ? esc(rankText(hardest.list)) : esc(diffInfo(levelDifficulty(hardest)).name)}</div></a>` : ''}
     <div class="tile"><div class="tile-label">Last played</div><div class="tile-value sm">${esc(when(recent))}</div></div>
   </div>`);
+  return el;
 }
+
+/** "Demonlist #12" / "AREDL #523" / "#800 (manual)". */
+export function rankText(r) {
+  if (!r) return '';
+  if (r.source === 'manual') return `#${r.position} (your placement)`;
+  return `${LIST_NAMES[r.source]} #${r.source === 'aredl' ? r.aredlPosition : r.position}`;
+}
+
+/** Small "#12" chip; manual placements carry a pencil, name-matched ones a hint in the tooltip. */
+export function rankChip(level, cls = '') {
+  const r = level.list;
+  if (!r) return '';
+  const pos = r.source === 'aredl' ? r.aredlPosition : r.position;
+  const tip = r.source === 'manual' ? 'Your own placement' : `${LIST_NAMES[r.source]} #${pos}${r.by === 'name' ? ' (matched by name)' : ''}`;
+  return `<span class="rank-chip ${r.source} ${cls}" title="${esc(tip)}">${r.source === 'manual' ? icon('pencil') : `<b>${r.source === 'pointercrate' ? 'DL' : 'AREDL'}</b>`}#${pos}</span>`;
+}
+
+/** The glowing completion tick. */
+export const doneTick = (title = 'Completed', cls = '') => `<span class="done-tick ${cls}" title="${esc(title)}">${icon('check')}</span>`;
 
 function toolbar(shown, total) {
   const s = settings();
   const sort = SORTS.find((x) => x.id === s.sort) || SORTS[0];
-  const filterCount = (s.filterType !== 'all') + (s.filterStatus !== 'all') + s.filterFav + (s.filterDiff.length > 0) + (s.filterTags.length > 0) + s.showHidden;
+  const filterCount = (s.filterType !== 'all') + (s.filterStatus !== 'all') + s.filterFav + (s.filterDiff.length > 0) + (s.filterTags.length > 0) + s.showHidden
+    + (s.filterList !== 'all') + (s.filterLength.length > 0);
   const el = h(`<div class="toolbar">
     <label class="search">${icon('search')}<input type="search" placeholder="Search levels, creators, tags…" value="${esc(query)}" spellcheck="false"></label>
     <button class="btn ghost ${filterCount ? 'active' : ''}" data-a="filter">${icon('filter')}<span>Filter${filterCount ? ` · ${filterCount}` : ''}</span></button>
@@ -286,6 +338,20 @@ function filterMenu(anchor) {
       '-',
       { label: 'Any difficulty', action: () => setSettings({ filterDiff: [] }) },
     ] },
+    { label: 'Demon list', submenu: [
+      { label: 'Any', checked: s.filterList === 'all', action: () => setSettings({ filterList: 'all' }) },
+      { label: 'On a list', checked: s.filterList === 'any', action: () => setSettings({ filterList: 'any' }) },
+      { label: 'Demonlist top 150', checked: s.filterList === 'pointercrate', action: () => setSettings({ filterList: 'pointercrate' }) },
+      { label: 'AREDL', checked: s.filterList === 'aredl', action: () => setSettings({ filterList: 'aredl' }) },
+      { label: 'My own placement', checked: s.filterList === 'manual', action: () => setSettings({ filterList: 'manual' }) },
+      { label: 'Not on a list', checked: s.filterList === 'none', action: () => setSettings({ filterList: 'none' }) },
+    ] },
+    { label: 'Length', submenu: [
+      ...LENGTHS.map((name, i) => ({ label: name, checked: s.filterLength.includes(i), action: () => setSettings({ filterLength: toggle(s.filterLength, i) }) })),
+      { label: 'Unknown', checked: s.filterLength.includes(-1), action: () => setSettings({ filterLength: toggle(s.filterLength, -1) }) },
+      '-',
+      { label: 'Any length', action: () => setSettings({ filterLength: [] }) },
+    ] },
     { label: 'Tags', disabled: !tags.length, submenu: tags.length ? [
       ...tags.map((t) => ({ label: t, swatch: tagColor(t), checked: s.filterTags.includes(t), action: () => setSettings({ filterTags: toggle(s.filterTags, t) }) })),
       '-',
@@ -295,7 +361,7 @@ function filterMenu(anchor) {
     { label: 'Favourites only', checked: s.filterFav, action: () => setSettings({ filterFav: !s.filterFav }) },
     { label: 'Show hidden levels', checked: s.showHidden, action: () => setSettings({ showHidden: !s.showHidden }) },
     '-',
-    { label: 'Reset filters', action: () => setSettings({ filterType: 'all', filterStatus: 'all', filterFav: false, filterDiff: [], filterTags: [], showHidden: false }) },
+    { label: 'Reset filters', action: () => setSettings({ filterType: 'all', filterStatus: 'all', filterFav: false, filterDiff: [], filterTags: [], filterList: 'all', filterLength: [], showHidden: false }) },
   ], anchor);
 }
 
@@ -314,7 +380,8 @@ function card(l) {
   const info = levelInfo(l);
   const best = l.sum.best ?? 0;
   const done = isCompleted(l);
-  const creator = s.showCreator && info?.creator ? `<span>by ${esc(info.creator)}</span>` : l.type === 'editor' ? '<span>Editor level</span>' : l.type === 'main' ? '<span>Main level</span>' : '';
+  const sub = s.showCreator && info?.creator ? `by ${esc(info.creator)}` : l.type === 'editor' ? 'Editor level' : l.type === 'main' ? 'Main level' : '';
+  const creator = sub || l.isGroup ? `<span>${sub}${l.isGroup ? `${sub ? ' · ' : ''}<span class="linked" title="${esc(l.members.map((m) => m.rawName).join(', '))}">${icon('link')}${l.members.length} copies</span>` : ''}</span>` : '';
   const stats = CARD_STATS.filter((x) => s.cardStats[x.id]).map((x) =>
     `<span class="cs" title="${esc(x.label)}">${icon(x.icon)}${esc(x.val(l))}</span>`).join('');
   const color = c.color ? `--lvl:${c.color};` : '';
@@ -323,11 +390,12 @@ function card(l) {
       ${thumbBox(l)}
       <div class="card-badges">
         ${s.showDifficulty ? diffChip(l) : ''}
+        ${s.showListRank ? rankChip(l) : ''}
         <span class="sp"></span>
         ${c.hidden ? `<span class="badge-ic" title="Hidden">${icon('eyeSlash')}</span>` : ''}
         <button class="fav ${c.fav ? 'on' : ''}" data-fav title="${c.fav ? 'Remove from favourites' : 'Add to favourites'}">${icon(c.fav ? 'starFill' : 'star')}</button>
+        ${done ? doneTick(l.sum.completions > 1 ? `Completed ${l.sum.completions}×` : 'Completed') : ''}
       </div>
-      ${done ? `<span class="done-badge" title="Completed">${icon('check')}</span>` : ''}
     </div>
     <div class="card-info">
       <div class="card-title" title="${esc(displayName(l))}">${esc(displayName(l))}</div>
@@ -343,6 +411,7 @@ function table(list) {
   const cols = [
     { id: 'name', label: 'Level', cls: 'name' },
     { id: 'difficulty', label: 'Difficulty' },
+    { id: 'enjoyment', label: 'Enjoyment' },
     { id: 'attempts', label: 'Attempts', num: true },
     { id: 'playtime', label: 'Playtime', num: true },
     { id: 'best', label: 'Best', num: true },
@@ -356,9 +425,10 @@ function table(list) {
     const c = custom(l.key);
     const info = levelInfo(l);
     return `<tr data-key="${esc(l.key)}" class="${c.hidden ? 'is-hidden' : ''}">
-      <td class="name"><div class="row-name">${thumbBox(l, 'mini')}<div><div class="rn-title">${c.fav ? `<span class="fav-dot">${icon('starFill')}</span>` : ''}${esc(displayName(l))}</div>
-        <div class="rn-sub">${info?.creator ? `by ${esc(info.creator)} · ` : ''}${esc(TYPES[l.type])}${l.id != null && l.type !== 'editor' ? ` · ${l.id}` : ''}</div></div></div></td>
-      <td>${diffChip(l, 'flat')}</td>
+      <td class="name"><div class="row-name">${thumbBox(l, 'mini')}<div><div class="rn-title">${c.fav ? `<span class="fav-dot">${icon('starFill')}</span>` : ''}${esc(displayName(l))}${isCompleted(l) ? doneTick('Completed', 'sm') : ''}</div>
+        <div class="rn-sub">${info?.creator ? `by ${esc(info.creator)} · ` : ''}${esc(TYPES[l.type])}${l.id != null && l.type !== 'editor' ? ` · ${l.id}` : ''}${l.isGroup ? ` · ${l.members.length} linked copies` : ''}</div></div></div></td>
+      <td><div class="diff-cell">${diffChip(l, 'flat')}${rankChip(l, 'flat')}</div></td>
+      <td>${c.enjoy ? starsHtml(c.enjoy) : '<span class="muted">–</span>'}</td>
       <td class="num">${num(l.attempts)}</td>
       <td class="num">${duration(l.playtime)}</td>
       <td class="num">${pctLabel(l, l.sum.best)}</td>
@@ -445,10 +515,10 @@ function wireDrops() {
 
 async function exportCsv() {
   const list = visibleLevels();
-  const rows = [['Level', 'ID', 'Type', 'Difficulty', 'Creator', 'Attempts', 'Playtime (h)', 'Best %', 'From-0 attempts', 'Practice runs', 'Completions', 'Sessions', 'First played', 'Last played', 'Tags']];
+  const rows = [['Level', 'ID', 'Type', 'Difficulty', 'List placement', 'Enjoyment (/10)', 'Length', 'Creator', 'Attempts', 'Playtime (h)', 'Best %', 'From-0 attempts', 'Practice runs', 'Completions', 'Sessions', 'First played', 'Last played', 'Tags']];
   for (const l of list) {
     const info = levelInfo(l);
-    rows.push([displayName(l), l.id, TYPES[l.type], diffInfo(levelDifficulty(l)).name, info?.creator || '', l.attempts, (l.playtime / 3600).toFixed(2),
+    rows.push([displayName(l), l.id, TYPES[l.type], diffInfo(levelDifficulty(l)).name, rankText(l.list), custom(l.key).enjoy || '', l.lengthCat != null ? LENGTHS[l.lengthCat] : '', info?.creator || '', l.attempts, (l.playtime / 3600).toFixed(2),
       l.sum.best ?? '', l.sum.from0, l.sum.runs, l.sum.completions, l.sessions.length,
       l.firstPlayed ? new Date(l.firstPlayed * 1000).toISOString().slice(0, 10) : '', l.lastPlayed ? new Date(l.lastPlayed * 1000).toISOString().slice(0, 10) : '',
       (custom(l.key).tags || []).join('; ')]);
