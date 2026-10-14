@@ -1,13 +1,23 @@
-// YouTube videos attached to a level: your own completion, or a showcase/verification you like.
-// Stored per level as custom.videos = [{ url, kind: 'completion' | 'showcase', title, author }].
-import { custom, setCustom } from '../store.js';
+// YouTube videos attached to a level: your completion or progress, the verification, other players'
+// completions, or a showcase. Stored per level as custom.videos = [{ url, kind, title, author }].
+import { custom, setCustom, displayName, levelInfo } from '../store.js';
 import { icon } from '../icons.js';
 import { h, openSheet, segmented, showMenu, toast } from '../ui.js';
-import { esc } from '../util.js';
+import { esc, debounce } from '../util.js';
 import { call } from '../rpc.js';
 import { storeUrl } from '../images.js';
 
-export const KINDS = { completion: 'My completion', showcase: 'Showcase' };
+// Order is the order they're offered in. 'completion' and 'showcase' keep their original ids.
+export const KINDS = {
+  completion: 'My completion',
+  progress: 'My progress',
+  verification: 'Verification',
+  other: 'Completion (other player)',
+  showcase: 'Showcase',
+};
+const KIND_ICON = { completion: 'check', progress: 'flag', verification: 'trophy', other: 'checkCircle', showcase: 'play' };
+// Words added to the YouTube search for each type.
+const KIND_QUERY = { completion: '100%', progress: 'progress', verification: 'verification', other: '100%', showcase: 'showcase' };
 
 /** The 11-character id from any common YouTube link shape (watch, youtu.be, shorts, embed, live). */
 export function youtubeId(url) {
@@ -35,7 +45,7 @@ export function videoGrid(level, { onChange } = {}) {
     const th = videoThumb(v.url);
     return `<div class="video" data-i="${i}" title="${esc(v.url)}">
       <div class="video-thumb">${th ? `<img src="${th}" alt="" loading="lazy">` : `<span class="video-ph">${icon('play')}</span>`}<span class="video-play">${icon('play')}</span>
-        <span class="video-kind ${v.kind}">${v.kind === 'completion' ? icon('check') : icon('play')}${esc(KINDS[v.kind] || 'Video')}</span></div>
+        <span class="video-kind ${v.kind}">${icon(KIND_ICON[v.kind] || 'play')}${esc(KINDS[v.kind] || 'Video')}</span></div>
       <div class="video-meta"><span class="video-title">${esc(v.title || v.url)}</span>${v.author ? `<span class="video-author">${esc(v.author)}</span>` : ''}</div>
       <button class="btn ghost icon-only sm video-more" data-more="${i}" title="More">${icon('ellipsis')}</button>
     </div>`;
@@ -51,7 +61,9 @@ export function videoGrid(level, { onChange } = {}) {
       const set = (list) => { setCustom(level.key, { videos: list }); onChange?.(); };
       showMenu([
         { label: 'Open video', icon: 'play', action: () => call('app.openUrl', { url: v.url }) },
-        { label: v.kind === 'completion' ? 'Mark as showcase' : 'Mark as my completion', icon: 'check', action: () => set(vids.map((x, j) => (j === i ? { ...x, kind: x.kind === 'completion' ? 'showcase' : 'completion' } : x))) },
+        { label: 'Type', icon: 'tag', submenu: Object.entries(KINDS).map(([k, label]) => ({
+          label, checked: v.kind === k, action: () => set(vids.map((x, j) => (j === i ? { ...x, kind: k } : x))),
+        })) },
         ...(videoThumb(v.url) ? [{ label: 'Use as level thumbnail', icon: 'image', action: () => useAsThumbnail(level, v) }] : []),
         { label: 'Copy link', icon: 'link', action: () => { navigator.clipboard.writeText(v.url); toast('Link copied'); } },
         '-',
@@ -77,58 +89,140 @@ async function useAsThumbnail(level, v) {
   } catch (e) { t.done(e.message, 4000); }
 }
 
-/** Sheet to add a video: paste a link, pick the type, and the title fills in from YouTube. */
+
+/**
+ * Sheet to add a video: search YouTube from inside the app (pre-filled with the level name and type) or
+ * paste a link. Pick the type; titles fill in automatically.
+ */
 export function openAddVideo(level, { kind = 'completion', onAdded } = {}) {
-  let k = kind, meta = null;
+  let k = kind, mode = 'search', meta = null, picked = null, results = [], edited = false;
+  const info = levelInfo(level);
+  const suggest = () => [displayName(level), info?.creator && k === 'verification' ? info.creator : '', 'geometry dash', KIND_QUERY[k]].filter(Boolean).join(' ');
   const s = openSheet({
-    size: 'md',
+    size: 'lg',
+    cls: 'add-video-sheet',
     html: `
       <div class="sheet-head"><h2>Add a video</h2><span class="sheet-sub"></span><button class="btn ghost icon-only" data-a="close">${icon('xmark')}</button></div>
-      <div class="sheet-body add-video">
-        <label class="lbl">YouTube link</label>
-        <input class="field" data-f="url" placeholder="https://www.youtube.com/watch?v=…" spellcheck="false">
-        <label class="lbl">Type</label>
+      <div class="av-top">
         <div class="kind-slot"></div>
-        <div class="video-preview"></div>
-        <label class="field-row switch-row"><span>Use the video thumbnail as the level thumbnail</span><label class="switch"><input type="checkbox" name="asThumb"><span></span></label></label>
+        <div class="mode-slot"></div>
       </div>
-      <div class="sheet-foot"><span class="hint">Opens in your browser when clicked.</span><div class="row-btns"><button class="btn" data-a="close">Cancel</button><button class="btn primary" data-a="add" disabled>Add video</button></div></div>`,
+      <div class="sheet-body add-video">
+        <div class="av-search">
+          <div class="av-bar"><label class="search wide">${icon('search')}<input type="search" data-f="q" spellcheck="false"></label><button class="btn" data-a="go">Search</button></div>
+          <div class="yt-results"></div>
+        </div>
+        <div class="av-link" hidden>
+          <label class="lbl">YouTube link</label>
+          <input class="field" data-f="url" placeholder="https://www.youtube.com/watch?v=…" spellcheck="false">
+          <div class="video-preview"></div>
+        </div>
+      </div>
+      <div class="sheet-foot"><label class="field-row switch-row"><span>Also use as the level thumbnail</span><label class="switch"><input type="checkbox" name="asThumb"><span></span></label></label><div class="row-btns"><button class="btn" data-a="close">Cancel</button><button class="btn primary" data-a="add" disabled>Add video</button></div></div>`,
   });
   const el = s.el;
-  el.querySelector('.sheet-sub').textContent = level.rawName;
+  const $ = (sel) => el.querySelector(sel);
+  $('.sheet-sub').textContent = displayName(level);
   el.querySelectorAll('[data-a=close]').forEach((b) => (b.onclick = () => s.close()));
-  el.querySelector('.kind-slot').append(segmented(Object.entries(KINDS).map(([id, label]) => ({ id, label })), k, (id) => (k = id), 'small'));
-  const input = el.querySelector('[data-f=url]');
-  const add = el.querySelector('[data-a=add]');
-  const preview = el.querySelector('.video-preview');
-  const update = async () => {
-    const url = input.value.trim();
-    const valid = /^https?:\/\//i.test(url);
-    add.disabled = !valid;
+  const q = $('[data-f=q]'), urlInput = $('[data-f=url]'), add = $('[data-a=add]'), list = $('.yt-results'), preview = $('.video-preview');
+  q.value = suggest();
+
+  const refreshAdd = () => { add.disabled = mode === 'search' ? !picked : !/^https?:\/\//i.test(urlInput.value.trim()); };
+
+  // ---- search
+  let seq = 0;
+  const search = async () => {
+    const query = q.value.trim();
+    if (!query) return;
+    const mine = ++seq;
+    picked = null;
+    refreshAdd();
+    list.innerHTML = '<div class="empty small"><span class="spinner big"></span></div>';
+    try {
+      results = await call('youtube.search', { query });
+    } catch (e) {
+      if (mine === seq) list.innerHTML = `<div class="empty small"><p>${esc(e.message)}</p><p class="muted">You can still paste a link instead.</p></div>`;
+      return;
+    }
+    if (mine !== seq) return;
+    const have = new Set(levelVideos(level.key).map((v) => youtubeId(v.url)));
+    list.innerHTML = results.length ? results.map((r, i) => `
+      <div class="yt-result ${have.has(r.id) ? 'added' : ''}" data-i="${i}" title="${esc(r.title)}" tabindex="0">
+        <span class="yt-thumb"><img src="https://i.ytimg.com/vi/${esc(r.id)}/mqdefault.jpg" alt="" loading="lazy">${r.duration ? `<span class="yt-dur">${esc(r.duration)}</span>` : ''}${have.has(r.id) ? `<span class="yt-have">${icon('check')}Added</span>` : ''}</span>
+        <span class="yt-title">${esc(r.title)}</span>
+        <span class="yt-sub">${esc([r.channel, r.views, r.published].filter(Boolean).join(' · '))}</span>
+        <button class="yt-open" data-open="${i}" title="Watch on YouTube first">${icon('globe')}</button>
+      </div>`).join('') : '<div class="empty small"><p class="muted">No videos found. Try different words.</p></div>';
+  };
+  list.addEventListener('click', (e) => {
+    const open = e.target.closest('[data-open]');
+    if (open) { e.stopPropagation(); call('app.openUrl', { url: `https://www.youtube.com/watch?v=${results[+open.dataset.open].id}` }); return; }
+    const b = e.target.closest('.yt-result');
+    if (!b) return;
+    list.querySelectorAll('.yt-result.on').forEach((x) => x.classList.remove('on'));
+    b.classList.add('on');
+    picked = results[+b.dataset.i];
+    refreshAdd();
+  });
+  list.addEventListener('dblclick', (e) => { if (e.target.closest('.yt-result') && picked) add.click(); });
+  q.addEventListener('input', () => { edited = true; });
+  q.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); search(); } });
+  $('[data-a=go]').onclick = search;
+
+  // ---- paste a link
+  const lookup = debounce(async () => {
+    const url = urlInput.value.trim();
     meta = null;
-    const th = valid ? videoThumb(url) : null;
+    const th = /^https?:\/\//i.test(url) ? videoThumb(url) : null;
     preview.innerHTML = th ? `<img src="${th}" alt=""><div class="vp-title muted">Looking up title…</div>` : '';
     if (!th) return;
     meta = await call('web.oembed', { url }).catch(() => null);
-    if (input.value.trim() !== url) return;
-    preview.querySelector('.vp-title').outerHTML = meta ? `<div class="vp-title"><b>${esc(meta.title)}</b><br><span class="muted">${esc(meta.author || '')}</span></div>` : '<div class="vp-title muted">Couldn’t read the title (it’ll show the link instead).</div>';
-  };
-  input.addEventListener('input', update);
+    if (urlInput.value.trim() !== url) return;
+    preview.querySelector('.vp-title').outerHTML = meta
+      ? `<div class="vp-title"><b>${esc(meta.title)}</b><br><span class="muted">${esc(meta.author || '')}</span></div>`
+      : '<div class="vp-title muted">Couldn’t read the title (it’ll show the link instead).</div>';
+  }, 250);
+  urlInput.addEventListener('input', () => { refreshAdd(); lookup(); });
+
+  // ---- type and mode
+  $('.kind-slot').append(segmented(Object.entries(KINDS).map(([id, label]) => ({ id, label })), k, (id) => {
+    k = id;
+    // The search follows the type, unless you've typed your own words.
+    if (!edited) { q.value = suggest(); if (mode === 'search') search(); }
+  }, 'small kinds'));
+  $('.mode-slot').append(segmented([{ id: 'search', label: 'Search YouTube', icon: 'search' }, { id: 'link', label: 'Paste a link', icon: 'link' }], mode, (id) => {
+    mode = id;
+    $('.av-search').hidden = id !== 'search';
+    $('.av-link').hidden = id !== 'link';
+    refreshAdd();
+    (id === 'search' ? q : urlInput).focus();
+  }, 'small'));
+
   add.onclick = async () => {
-    const url = input.value.trim();
-    const v = { url, kind: k, title: meta?.title || '', author: meta?.author || '' };
+    const v = mode === 'search'
+      ? { url: `https://www.youtube.com/watch?v=${picked.id}`, kind: k, title: picked.title, author: picked.channel || '' }
+      : { url: urlInput.value.trim(), kind: k, title: meta?.title || '', author: meta?.author || '' };
+    if (levelVideos(level.key).some((x) => youtubeId(x.url) && youtubeId(x.url) === youtubeId(v.url))) { toast('That video is already on this level'); return; }
     setCustom(level.key, { videos: [...levelVideos(level.key), v] });
-    if (el.querySelector('input[name=asThumb]').checked && videoThumb(url)) await useAsThumbnail(level, v);
+    if ($('input[name=asThumb]').checked && videoThumb(v.url)) await useAsThumbnail(level, v);
     s.close();
-    toast('Video added');
+    toast(`Added ${KINDS[k].toLowerCase()} video`);
     onAdded?.();
   };
+
   setTimeout(async () => {
-    input.focus();
-    // Handy: a YouTube link already on the clipboard gets pasted in.
+    // A YouTube link already on the clipboard? Start on the link tab with it filled in.
     try {
       const clip = (await navigator.clipboard.readText()).trim();
-      if (youtubeId(clip)) { input.value = clip; update(); }
+      if (youtubeId(clip) && !levelVideos(level.key).some((v) => youtubeId(v.url) === youtubeId(clip))) {
+        el.querySelector('.mode-slot .seg-btn[data-id=link]').click();
+        urlInput.value = clip;
+        refreshAdd();
+        lookup();
+        return;
+      }
     } catch { /* clipboard not available */ }
+    q.focus();
+    search();
   }, 40);
 }
