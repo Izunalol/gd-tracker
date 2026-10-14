@@ -955,3 +955,57 @@ details.adjust summary::-webkit-details-marker { display: none; }
 .yt-open .ic { width: 15px; height: 15px; }
 .yt-result:hover .yt-open { opacity: 1; }
 .add-video-sheet .sheet-foot .field-row { gap: 10px; font-size: 13px; }
+
+/* ---------------------------------------------------------------- lists: tabs, leaderboard, player & level sheets */
+
+.lists .page-head { flex-wrap: wrap; }
+.player-link { border: 0; background: none; padding: 0; color: inherit; font: inherit; font-weight: 600; cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 30%, transparent); text-underline-offset: 2px; }
+.player-link:hover { color: var(--accent); text-decoration-color: var(--accent); }
+.flag { height: 13px; width: auto; border-radius: 2px; margin-right: 7px; vertical-align: -1px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25); }
+.lb-tbl tbody tr { cursor: pointer; }
+.lb-name { display: inline-flex; align-items: center; }
+.lb-tbl tr.top1 .pos { color: #ffd25e; }
+.lb-tbl tr.top2 .pos { color: #d7dce5; }
+.lb-tbl tr.top3 .pos { color: #e09a62; }
+.lb-extra { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 380px; font-size: 12.5px; }
+.more-row { display: flex; justify-content: center; padding: 14px; }
+
+.list-sheet .sheet-head h2 { display: flex; align-items: center; }
+.list-sheet .sheet-body { min-height: 360px; }
+.pl-section { margin-top: 18px; }
+.pl-section h3 { font-size: 14px; margin: 0 0 8px; }
+.pl-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 6px; }
+.pl-item {
+  display: flex; align-items: center; gap: 6px; min-width: 0; height: 32px; padding: 0 10px; border-radius: var(--r-xs);
+  border: 1px solid var(--border); background: var(--surface-2); font-size: 13px; text-align: left; cursor: pointer;
+}
+.pl-item:hover { border-color: rgba(var(--accent-rgb), 0.6); }
+.pl-item.beat { background: linear-gradient(90deg, rgba(72, 209, 108, 0.16), var(--surface-2) 70%); }
+.pl-pos { color: var(--text-3); font-weight: 700; font-variant-numeric: tabular-nums; flex: none; }
+.pl-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.pl-prog { color: var(--text-2); font-size: 12px; flex: none; }
+.pl-video { flex: none; color: var(--text-3); display: grid; place-items: center; }
+.pl-video:hover { color: #e62117; }
+.pl-video .ic { width: 14px; height: 14px; }
+
+.ll-top { display: flex; gap: 18px; align-items: flex-start; }
+.ll-thumb { width: 260px; flex: none; aspect-ratio: 16/9; border-radius: var(--r-sm); overflow: hidden; background: var(--surface-3); }
+.ll-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ll-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.ll-meta { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--text-2); }
+.ll-you { font-size: 13.5px; padding: 8px 12px; border-radius: var(--r-xs); background: var(--surface-2); display: flex; align-items: center; gap: 6px; }
+.ll-you.win { background: linear-gradient(90deg, rgba(72, 209, 108, 0.18), var(--surface-2) 70%); }
+.ll-you .done-tick.sm { margin-left: 0; }
+.ll-creators { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 13px; }
+.ll-h { font-size: 15px; margin: 20px 0 8px; }
+.vic { display: flex; flex-direction: column; }
+.vic-row { display: grid; grid-template-columns: 1fr 110px 90px 34px; align-items: center; gap: 10px; padding: 5px 8px; border-radius: var(--r-xs); font-size: 13px; }
+.vic-row:nth-child(odd) { background: var(--surface-2); }
+.vic-row.full .vic-prog { color: var(--done); font-weight: 600; }
+.vic-name { display: flex; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; }
+.vic-prog { text-align: right; font-variant-numeric: tabular-nums; }
+.vic-date { color: var(--text-3); font-size: 12px; text-align: right; }
+@media (max-width: 900px) { .ll-top { flex-direction: column; } .ll-thumb { width: 100%; } }
+
+/* The hidden attribute must win over display rules like .btn { display: inline-flex }. */
+[hidden] { display: none !important; }

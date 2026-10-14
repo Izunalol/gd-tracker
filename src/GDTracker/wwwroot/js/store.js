@@ -63,6 +63,7 @@ export const DEFAULT_SETTINGS = {
   listTab: 'pointercrate',
   listShow: 'all',
   listLegacy: false,
+  listView: 'levels',
 };
 
 export const state = {
@@ -80,7 +81,7 @@ export const state = {
   info: {}, // online level info by id
   thumbs: {}, // id → url | null (small)
   hdThumbs: {}, // id → url | null
-  lists: { pointercrate: null, aredl: null }, // { fetched, levels, error }
+  lists: { pointercrate: null, challenge: null, aredl: null, ill: null }, // { fetched, levels, error }
   listIndex: { byId: new Map(), byName: new Map() },
   gdIcons: null, // { available, icons: { "10": url } } cut from your GD install
   version: '',
@@ -530,7 +531,7 @@ export function loadLists(force = false) {
   if (listsBusy && !force) return listsBusy;
   listsBusy = (async () => {
     const online = settings().online && settings().lists;
-    await Promise.all(['pointercrate', 'aredl'].map(async (name) => {
+    await Promise.all(['pointercrate', 'challenge', 'aredl', 'ill'].map(async (name) => {
       try { state.lists[name] = await call('lists.get', { name, force, online }); }
       catch (e) { state.lists[name] = { fetched: 0, levels: [], error: e.message }; }
     }));

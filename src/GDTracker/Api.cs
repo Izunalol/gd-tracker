@@ -107,6 +107,8 @@ public sealed class Api
             }
             case "youtube.search":
                 return await YouTube.Search(Json.Get(p, "query", ""));
+            case "lists.api":
+                return await DemonLists.Api(Json.Get(p, "url", ""));
             case "lists.get":
                 return await DemonLists.Get(Json.Get(p, "name", ""), Json.Get(p, "force", false), Json.Get(p, "online", true));
             case "thumbs.clearCache":
