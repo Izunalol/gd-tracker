@@ -1009,3 +1009,12 @@ details.adjust summary::-webkit-details-marker { display: none; }
 
 /* The hidden attribute must win over display rules like .btn { display: inline-flex }. */
 [hidden] { display: none !important; }
+
+/* Leaderboard country filter */
+.country-pick { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 4px 0 12px; border-radius: var(--r-sm); background: var(--surface); border: 1px solid var(--border-strong); }
+.country-pick .flag { margin-right: 0; }
+.country-pick .ic { width: 16px; height: 16px; color: var(--text-3); }
+.country-pick select { border: 0; background: transparent; color: var(--text); height: 100%; outline: none; max-width: 220px; padding-right: 6px; }
+.country-pick select option { background: var(--surface-2); }
+.flag-btn { border: 0; background: none; padding: 0; cursor: pointer; display: inline-flex; border-radius: 3px; }
+.flag-btn:hover .flag { box-shadow: 0 0 0 2px var(--accent); }

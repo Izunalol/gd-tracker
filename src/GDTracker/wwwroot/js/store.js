@@ -64,6 +64,7 @@ export const DEFAULT_SETTINGS = {
   listShow: 'all',
   listLegacy: false,
   listView: 'levels',
+  lbCountry: '',
 };
 
 export const state = {

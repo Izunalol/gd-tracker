@@ -38,6 +38,22 @@ const PAGE = 50;
 // AREDL stores countries as ISO 3166 numeric codes; flag images want the two-letter code.
 const NUMERIC = '4af8al12dz16as20ad24ao28ag31az32ar36au40at44bs48bh50bd51am52bb56be60bm64bt68bo70ba72bw76br84bz90sb96bn100bg104mm108bi112by116kh120cm124ca132cv136ky140cf144lk148td152cl156cn158tw170co174km178cg180cd184ck188cr191hr192cu196cy203cz204bj208dk212dm214do218ec222sv226gq231et232er233ee234fo242fj246fi250fr254gf258pf262dj266ga268ge270gm275ps276de288gh292gi296ki300gr304gl308gd312gp316gu320gt324gn328gy332ht340hn344hk348hu352is356in360id364ir368iq372ie376il380it384ci388jm392jp398kz400jo404ke408kp410kr414kw417kg418la422lb426ls428lv430lr434ly438li440lt442lu446mo450mg454mw458my462mv466ml470mt474mq478mr480mu484mx492mc496mn498md499me504ma508mz512om516na520nr524np528nl531cw533aw540nc548vu554nz558ni562ne566ng578no583fm584mh585pw586pk591pa598pg600py604pe608ph616pl620pt624gw626tl630pr634qa638re642ro643ru646rw659kn662lc670vc674sm678st682sa686sn688rs690sc694sl702sg703sk704vn705si706so710za716zw724es728ss729sd740sr748sz752se756ch760sy762tj764th768tg776to780tt784ae788tn792tr795tm798tv800ug804ua807mk818eg826gb834tz840us850vi854bf858uy860uz862ve882ws887ye894zm';
 const numericToAlpha = new Map([...NUMERIC.matchAll(/(\d+)([a-z]{2})/g)].map((m) => [+m[1], m[2]]));
+const alphaToNumeric = new Map([...numericToAlpha].map(([n, a]) => [a, n]));
+export const codeFromNumeric = (n) => numericToAlpha.get(n) || '';
+
+const regionNames = (() => { try { return new Intl.DisplayNames(['en'], { type: 'region' }); } catch { return null; } })();
+export const countryName = (cc) => { try { return regionNames?.of(cc.toUpperCase()) || cc.toUpperCase(); } catch { return cc.toUpperCase(); } };
+
+/** Every country we can filter by: [{ code: 'au', name: 'Australia' }], sorted by name. */
+export const COUNTRIES = [...alphaToNumeric.keys()].map((code) => ({ code, name: countryName(code) }))
+  .sort((a, b) => a.name.localeCompare(b.name));
+
+/** The user's own country from the Windows region settings (en-AU → 'au'), or null. */
+export function homeCountry() {
+  const loc = new Intl.NumberFormat().resolvedOptions().locale || navigator.language || '';
+  const region = loc.split('-').find((p, i) => i > 0 && /^[A-Z]{2}$/i.test(p));
+  return region && alphaToNumeric.has(region.toLowerCase()) ? region.toLowerCase() : null;
+}
 
 /** <img> flag for a two-letter code (or ISO numeric), '' when unknown. */
 export function flag(code, title = '') {
@@ -48,26 +64,37 @@ export function flag(code, title = '') {
 
 // ---------------------------------------------------------------- leaderboards
 
+/** Whether a list's leaderboard knows players' countries (the Impossible Levels List doesn't). */
+export const hasCountries = (listId) => SITES[listId].kind !== 'ill';
+
 /**
- * One page of a list's player ranking. cursor: opaque paging state (null for the first page).
- * Returns { rows: [{ rank, id, slug, name, score, country, extra }], next }.
+ * One page of a list's player ranking, optionally only one country (two-letter code).
+ * cursor: opaque paging state (null for the first page).
+ * Returns { rows: [{ rank, localRank, id, slug, name, score, country, extra }], next }.
+ * `localRank` is the position within the country when filtering by one.
  */
-export async function leaderboard(listId, { query = '', cursor = null } = {}) {
+export async function leaderboard(listId, { query = '', cursor = null, country = '' } = {}) {
   const site = SITES[listId];
   if (site.kind === 'pc') {
-    const after = cursor ?? 0;
-    const data = await api(`${site.base}/api/v1/players/ranking/?limit=${PAGE}&after=${after}${query ? `&name_contains=${encodeURIComponent(query)}` : ''}`);
-    const rows = data.map((p) => ({ rank: p.rank, id: p.id, name: p.name, score: p.score, country: p.nationality?.country_code, countryName: p.nationality?.nation }));
-    return { rows, next: rows.length === PAGE ? rows[rows.length - 1].rank : null };
+    // The ranking pages by global rank; with a country filter we count the in-country position ourselves.
+    const { after, offset } = cursor ?? { after: 0, offset: 0 };
+    const data = await api(`${site.base}/api/v1/players/ranking/?limit=${PAGE}&after=${after}${query ? `&name_contains=${encodeURIComponent(query)}` : ''}${country ? `&nation=${country.toUpperCase()}` : ''}`);
+    const rows = data.map((p, i) => ({
+      rank: p.rank, localRank: country && !query ? offset + i + 1 : null, id: p.id, name: p.name, score: p.score,
+      country: p.nationality?.country_code, countryName: p.nationality?.nation,
+    }));
+    return { rows, next: rows.length === PAGE ? { after: rows[rows.length - 1].rank, offset: offset + rows.length } : null };
   }
   if (site.kind === 'aredl') {
     const page = cursor ?? 1;
-    const data = await api(`https://api.aredl.net/v2/api/aredl/leaderboard?page=${page}&per_page=${PAGE}${query ? `&name_filter=${encodeURIComponent(query)}` : ''}`);
+    const num = country ? alphaToNumeric.get(country.toLowerCase()) : null;
+    const data = await api(`https://api.aredl.net/v2/api/aredl/leaderboard?page=${page}&per_page=${PAGE}${query ? `&name_filter=${encodeURIComponent(query)}` : ''}${num ? `&country_filter=${num}` : ''}`);
     const rows = (data.data || []).map((r) => ({
-      rank: r.rank, id: r.user?.id, name: r.user?.global_name || r.user?.username, score: r.total_points, country: r.country ?? r.user?.country,
+      rank: r.rank, localRank: num ? r.country_rank : null, id: r.user?.id, name: r.user?.global_name || r.user?.username, score: r.total_points,
+      country: r.country ?? r.user?.country,
       extra: `${r.extremes ?? 0} extremes${r.hardest ? ` · hardest ${r.hardest.name}` : ''}`,
     }));
-    return { rows, next: page < (data.pages || 0) ? page + 1 : null };
+    return { rows, next: page < (data.pages || 0) ? page + 1 : null, total: data.count };
   }
   // Impossible Levels List: one small list, filtered here.
   const data = await api('https://api.impossiblelevels.com/api/Records/leaderboard?includeRecords=false');

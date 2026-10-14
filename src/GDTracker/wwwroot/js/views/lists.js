@@ -8,7 +8,7 @@ import { icon } from '../icons.js';
 import { h, segmented, toast } from '../ui.js';
 import { esc, num, duration, relative, debounce, plural } from '../util.js';
 import { doneTick } from './gallery.js';
-import { SITES, leaderboard, flag, runText } from '../listsites.js';
+import { SITES, leaderboard, flag, runText, hasCountries, COUNTRIES, countryName, homeCountry, codeFromNumeric } from '../listsites.js';
 import { openPlayer, openListLevel } from './listsheets.js';
 
 let root = null, unsub = [], query = '', lbQuery = '';
@@ -209,11 +209,22 @@ function longestRun(l) {
 
 function players(tab) {
   const site = SITES[tab];
-  const key = `${tab}|${lbQuery}`;
+  const country = hasCountries(tab) ? settings().lbCountry || '' : '';
+  const key = `${tab}|${lbQuery}|${country}`;
+  const home = homeCountry();
+  const countLabel = lb.key === key && lb.rows.length
+    ? (lb.total ? plural(lb.total, 'player') : plural(lb.rows.length, 'player') + (lb.next ? '+' : ''))
+    : '';
   const bar = h(`<div class="toolbar">
     <label class="search">${icon('search')}<input type="search" placeholder="Find a player…" value="${esc(lbQuery)}" spellcheck="false"></label>
-    <span class="spacer"></span><span class="count">${lb.key === key && lb.rows.length ? plural(lb.rows.length, 'player') + (lb.next ? '+' : '') : ''}</span>
+    ${hasCountries(tab) ? `<label class="country-pick">${country ? flag(country) : icon('globe')}<select data-a="country">
+      <option value="">All countries</option>
+      ${home ? `<option value="${home}" ${country === home ? 'selected' : ''}>${esc(countryName(home))} (you)</option><option disabled>──────────</option>` : ''}
+      ${COUNTRIES.map((c) => `<option value="${c.code}" ${country === c.code && c.code !== home ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+    </select></label>` : ''}
+    <span class="spacer"></span><span class="count">${countLabel}</span>
   </div>`);
+  bar.querySelector('[data-a=country]')?.addEventListener('change', (e) => setSettings({ lbCountry: e.target.value }));
   const input = bar.querySelector('input');
   input.addEventListener('input', debounce(() => {
     lbQuery = input.value.trim();
@@ -233,16 +244,28 @@ function players(tab) {
     if (lb.error) { wrap.innerHTML = `<div class="empty small"><p>${esc(lb.error)}</p></div>`; return; }
     if (!lb.rows.length) { wrap.innerHTML = lb.busy ? '<div class="empty small"><span class="spinner big"></span></div>' : '<div class="empty small"><p class="muted">No players found.</p></div>'; return; }
     const extraCol = lb.rows.some((r) => r.extra);
+    // Filtered to a country: the in-country position leads, the global rank follows.
+    const local = country && lb.rows.some((r) => r.localRank != null);
+    const medal = (r) => (local ? r.localRank : r.rank);
     wrap.innerHTML = `<div class="table-wrap"><table class="tbl lb-tbl">
-      <thead><tr><th>Rank</th><th>Player</th><th class="num">${esc(site.scoreLabel)}</th>${extraCol ? '<th></th>' : ''}</tr></thead>
-      <tbody>${lb.rows.map((r, i) => `<tr data-r="${i}" class="${r.rank <= 3 ? `top${r.rank}` : ''}">
-        <td class="pos">${r.rank != null ? `#${num(r.rank)}` : ''}</td>
-        <td><span class="lb-name">${flag(r.country, r.countryName)}<b>${esc(r.name)}</b></span></td>
+      <thead><tr><th>${local ? `${esc(countryName(country))}` : 'Rank'}</th>${local ? '<th class="num">Global</th>' : ''}<th>Player</th><th class="num">${esc(site.scoreLabel)}</th>${extraCol ? '<th></th>' : ''}</tr></thead>
+      <tbody>${lb.rows.map((r, i) => `<tr data-r="${i}" class="${medal(r) <= 3 ? `top${medal(r)}` : ''}">
+        <td class="pos">${local ? (r.localRank != null ? `#${num(r.localRank)}` : '') : r.rank != null ? `#${num(r.rank)}` : ''}</td>
+        ${local ? `<td class="num muted">${r.rank != null ? `#${num(r.rank)}` : ''}</td>` : ''}
+        <td><span class="lb-name">${r.country && !country ? `<button class="flag-btn" data-cc="${esc(typeof r.country === 'number' ? '' : String(r.country).toLowerCase())}" data-num="${typeof r.country === 'number' ? r.country : ''}" title="Only ${esc(r.countryName || 'this country')}">${flag(r.country, r.countryName)}</button>` : flag(r.country, r.countryName)}<b>${esc(r.name)}</b></span></td>
         <td class="num">${typeof r.score === 'number' ? (site.kind === 'ill' ? num(r.score) : r.score >= 100 ? num(r.score) : r.score.toFixed(2)) : ''}</td>
         ${extraCol ? `<td class="muted lb-extra">${esc(r.extra || '')}</td>` : ''}
       </tr>`).join('')}</tbody></table></div>
       ${lb.next != null ? `<div class="more-row"><button class="btn" data-a="more" ${lb.busy ? 'disabled' : ''}>${lb.busy ? 'Loading…' : 'Load more'}</button></div>` : ''}`;
     wrap.querySelector('tbody').addEventListener('click', (e) => {
+      // A flag filters the leaderboard to that country.
+      const f = e.target.closest('.flag-btn');
+      if (f) {
+        e.stopPropagation();
+        const cc = f.dataset.cc || codeFromNumeric(+f.dataset.num);
+        if (cc) setSettings({ lbCountry: cc });
+        return;
+      }
       const tr = e.target.closest('tr[data-r]');
       if (tr) { const r = lb.rows[+tr.dataset.r]; openPlayer(tab, r.id, r.slug, { rank: r.rank, score: r.score }); }
     });
@@ -254,10 +277,11 @@ function players(tab) {
     if (!more) { lb = { key, rows: [], next: null, busy: true, error: '' }; }
     draw();
     try {
-      const res = await leaderboard(tab, { query: lbQuery, cursor: more ? lb.next : null });
+      const res = await leaderboard(tab, { query: lbQuery, cursor: more ? lb.next : null, country });
       if (lb.key !== key) return;
       lb.rows = [...lb.rows, ...res.rows];
       lb.next = res.next;
+      lb.total = res.total;
     } catch (e) { lb.error = e.message; }
     lb.busy = false;
     if (root && settings().listView === 'players') render(true);
