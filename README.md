@@ -2,6 +2,14 @@
 
 A readable dashboard for the data the **Death Tracker** Geode mod (by abb2k, `elohmrow.death_tracker`) records while you play Geometry Dash.
 
+## Download
+
+**[⬇ Download GDTracker.exe](https://github.com/Izunalol/gd-tracker/releases/latest/download/GDTracker.exe)** (latest version) · [all releases](https://github.com/Izunalol/gd-tracker/releases)
+
+It's a single self-contained file: no install, no .NET needed. It runs on Windows 10/11 with the Microsoft Edge WebView2 runtime (built into Windows 11). Windows may show a SmartScreen warning the first time because the exe isn't code-signed. Click **More info → Run anyway**.
+
+You need the [Death Tracker](https://geode-sdk.org/mods/elohmrow.death_tracker) mod installed in Geode for there to be anything to show.
+
 ## What it shows
 
 - **Levels gallery** — every tracked level as a card with its thumbnail, difficulty, list placement, best %, attempts, playtime and when you last played it (completed levels get a glowing tick). Sort by last played, attempts, playtime, best %, name, difficulty (list placement first, then the in-game face), enjoyment, length, sessions and more; filter by type, completion, difficulty, demon list, length, tags and favourites; group by difficulty, list, length, status, type, tag or month. There is also a sortable table view and a CSV export.
