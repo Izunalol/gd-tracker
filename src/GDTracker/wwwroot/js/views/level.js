@@ -4,7 +4,9 @@ import { TYPES, LENGTHS, percentTable, hardestParts, runGroups } from '../data.j
 import { thumbInner } from '../thumbs.js';
 import { columnChart, lineChart, meter } from '../charts.js';
 import { icon } from '../icons.js';
-import { h, showMenu, segmented, ratingControl } from '../ui.js';
+import { h, showMenu, segmented, ratingControl, toast } from '../ui.js';
+import { openFinder } from './finder.js';
+import { levelVideos, videoGrid, openAddVideo } from './videos.js';
 import { esc, num, compact, duration, when, absDate, dateTime, shortDate, clockTime, pct, plural, debounce } from '../util.js';
 import { diffChip, rankChip, rankText, doneTick } from './gallery.js';
 import { openLinkEditor } from './links.js';
@@ -78,7 +80,9 @@ function render(keep = false) {
   }
   const c = custom(key);
   root.style.setProperty('--lvl', c.color || 'var(--accent)');
-  root.append(hero(level), tiles(level), tabsBar());
+  // A level added from search with nothing recorded yet: a row of zeros says nothing.
+  const hasData = level.sessions.length || level.all.deaths.size || level.all.runs.length || level.adjust;
+  root.append(hero(level), ...(hasData ? [tiles(level)] : []), tabsBar());
   const body = h('<div class="tab-body"></div>');
   root.append(body);
   ({ overview, sessions, practice, percent, notes })[tab](body, level);
@@ -102,6 +106,7 @@ function hero(level) {
   }
   if (displayName(level) !== level.rawName) meta.push(`<span class="muted">originally “${esc(level.rawName)}”</span>`);
   const tags = (c.tags || []).map((t) => `<span class="tag"><i style="background:${tagColor(t)}"></i>${esc(t)}</span>`).join('');
+  const completionVideo = levelVideos(level.key).find((v) => v.kind === 'completion');
   const el = h(`<div class="hero ${settings().levelHeroBlur ? 'blur' : ''}">
     <div class="hero-bg thumb hd" data-thumb-key="${esc(level.key)}">${thumbInner(level, { hd: true })}</div>
     <div class="hero-shade"></div>
@@ -109,6 +114,7 @@ function hero(level) {
       <div class="hero-top">
         <a class="btn ghost on-image" href="#/">${icon('chevronLeft')}Levels</a>
         <span class="sp"></span>
+        ${completionVideo ? `<button class="btn ghost on-image watch" data-a="watch" title="${esc(completionVideo.title || completionVideo.url)}">${icon('play')}My completion</button>` : ''}
         <button class="btn ghost on-image icon-only ${c.fav ? 'fav-on' : ''}" data-a="fav" title="Favourite">${icon(c.fav ? 'starFill' : 'star')}</button>
         <button class="btn ghost on-image" data-a="customize">${icon('palette')}Customise</button>
         <button class="btn ghost on-image icon-only" data-a="more" title="More">${icon('ellipsis')}</button>
@@ -116,7 +122,7 @@ function hero(level) {
       <div class="hero-main">
         <button class="hero-thumb thumb hd" data-thumb-key="${esc(level.key)}" data-a="thumb" title="Change thumbnail">${thumbInner(level, { hd: true })}</button>
         <div class="hero-text">
-          <div class="hero-kicker">${diffChip(level)}${rankChip(level)}${isCompleted(level) ? `<span class="chip done glow">${icon('check')}Completed${level.sum.completions > 1 ? ` ${level.sum.completions}×` : ''}</span>` : ''}${level.error ? `<span class="chip warn" title="${esc(level.error)}">Partially unreadable</span>` : ''}</div>
+          <div class="hero-kicker">${diffChip(level)}${level.list ? `<button class="rank-btn" data-a="rank" title="List placement — click to correct">${rankChip(level)}</button>` : ''}${isCompleted(level) ? `<span class="chip done glow">${icon('check')}Completed${level.sum.completions > 1 ? ` ${level.sum.completions}×` : ''}</span>` : ''}${level.error ? `<span class="chip warn" title="${esc(level.error)}">Partially unreadable</span>` : ''}</div>
           <h1>${esc(displayName(level))}</h1>
           <div class="hero-meta">${meta.map((m) => `<span>${m}</span>`).join('<span class="dot">·</span>')}</div>
           <div class="hero-rate"><span class="enjoy-slot"></span><span class="enjoy-lbl">Enjoyment</span></div>
@@ -130,8 +136,30 @@ function hero(level) {
   el.querySelector('[data-a=fav]').onclick = () => setCustom(level.key, { fav: !c.fav });
   el.querySelector('[data-a=customize]').onclick = () => openCustomize(level);
   el.querySelector('[data-a=thumb]').onclick = () => openCustomize(level, { focus: 'thumb' });
-  el.querySelector('[data-a=more]').onclick = (e) => showMenu(levelMenuItems(level), e.currentTarget, { align: 'end' });
+  el.querySelector('[data-a=more]').onclick = (e) => showMenu([
+    { label: 'Add a video…', icon: 'play', action: () => openAddVideo(level) },
+    ...levelMenuItems(level),
+  ], e.currentTarget, { align: 'end' });
+  el.querySelector('[data-a=watch]')?.addEventListener('click', () => call('app.openUrl', { url: completionVideo.url }));
+  el.querySelector('[data-a=rank]')?.addEventListener('click', (e) => rankMenu(level, e.currentTarget));
   return el;
+}
+
+/** The list placement can be wrong (a same-named level); let the user say so or pick the right one. */
+function rankMenu(level, anchor) {
+  const r = level.list;
+  const c = custom(level.key);
+  const pos = r.source === 'aredl' ? r.aredlPosition : r.position;
+  const site = r.source === 'pointercrate' ? `https://pointercrate.com/demonlist/${r.position}/` : r.entry?.levelId ? `https://aredl.net/list/${r.entry.levelId}` : null;
+  showMenu([
+    { header: r.source === 'manual' ? `Your placement #${pos}` : `${rankText(r)}${r.entry?.name ? ` · ${r.entry.name}` : ''}${r.by === 'name' ? ' (matched by name)' : r.by === 'chosen' ? ' (chosen by you)' : ''}` },
+    ...(r.source !== 'manual' ? [
+      { label: 'Not this level', icon: 'xmark', action: () => { setCustom(level.key, { noList: true, listId: null }); toast('List placement removed for this level'); } },
+      { label: 'Pick the right list level…', icon: 'search', action: () => openFinder({ query: level.rawName, pick: (entry) => { setCustom(level.key, { listId: +entry.levelId, noList: false }); toast(`Matched to ${entry.name}`); } }) },
+    ] : [{ label: 'Remove my placement', icon: 'xmark', action: () => setCustom(level.key, { listPos: null }) }]),
+    ...(c.listId ? [{ label: 'Use automatic match', icon: 'undo', action: () => setCustom(level.key, { listId: null }) }] : []),
+    ...(site ? ['-', { label: `Open on ${r.source === 'pointercrate' ? 'Pointercrate' : 'AREDL'}`, icon: 'globe', action: () => call('app.openUrl', { url: site }) }] : []),
+  ], anchor);
 }
 
 function tiles(level) {
@@ -173,6 +201,15 @@ function tabsBar() {
   return el;
 }
 
+function videosCard(level) {
+  const n = levelVideos(level.key).length;
+  const panel = card(`Videos${n ? ` <small>${n}</small>` : ''}`, n ? '' : '<p class="muted">Link your completion or a showcase from YouTube.</p>',
+    `<button class="btn sm" data-a="addVideo">${icon('plus')}Add video</button>`, 'wide');
+  if (n) panel.querySelector('.panel-body').append(videoGrid(level));
+  panel.querySelector('[data-a=addVideo]').onclick = () => openAddVideo(level);
+  return panel;
+}
+
 const card = (title, body = '', actions = '', cls = '') => h(`<div class="card-panel ${cls}"><div class="panel-head"><h3>${title}</h3><span class="sp"></span>${actions}</div><div class="panel-body">${body}</div></div>`);
 
 // ---------------------------------------------------------------- overview
@@ -182,6 +219,16 @@ function overview(body, level) {
   const s = settings();
   const metric = s.chartMetric || 'deaths';
   const platformer = isPlatformer(level);
+
+  if (levelVideos(level.key).length) body.append(videosCard(level));
+  // A level added from search: nothing from Death Tracker to chart yet.
+  if (!level.sessions.length && !level.all.deaths.size && !level.all.runs.length) {
+    body.append(card('No Death Tracker data yet', `<p class="muted">${isCompleted(level) ? 'Marked as completed. ' : ''}Play this level with the Death Tracker mod and its deaths, sessions and runs will appear here.${level.adjust ? ' The numbers above include stats you added by hand.' : ''}</p>
+      <div class="row-btns"><button class="btn" data-a="video">${icon('play')}Add a video</button><button class="btn" data-a="cust">${icon('palette')}Rate, mark completed or adjust stats</button></div>`, '', 'wide'));
+    body.querySelector('[data-a=video]').onclick = () => openAddVideo(level);
+    body.querySelector('[data-a=cust]').onclick = () => openCustomize(level);
+    return;
+  }
 
   const chartCard = card(`Deaths by ${platformer ? 'checkpoint' : 'percent'} <small>${esc(sc.label)} · from 0</small>`, '<div class="chart-slot"></div>', '', 'wide');
   const seg = segmented([
@@ -309,7 +356,7 @@ function sessions(body, level) {
     const copy = level.isGroup ? level.members.find((m) => m.key === s.member) : null;
     const tr = h(`<table><tr class="srow ${open ? 'open' : ''} ${win ? 'win' : ''}" data-s="${s.start}">
       <td class="exp">${icon(open ? 'chevronDown' : 'chevronRight')}</td>
-      <td><div class="s-date">${esc(dateTime(s.start))}${win ? doneTick(s.sum.completions > 1 ? `Completed ${s.sum.completions}× this session` : 'Completed this session', 'sm') : s.newRecord ? `<span class="chip rec" title="New all-time best this session">${icon('trophy')}New best</span>` : ''}</div>
+      <td><div class="s-date">${esc(dateTime(s.start))}${win ? `<span class="chip done glow sm-chip">${icon('check')}Completed${s.sum.completions > 1 ? ` ${s.sum.completions}×` : ''}</span>` : s.newRecord ? `<span class="chip rec" title="New all-time best this session">${icon('trophy')}New best</span>` : ''}</div>
         <div class="s-sub">${s.last - s.start > 60 ? `${esc(clockTime(s.start))} – ${esc(clockTime(s.last))}` : ''}${copy ? `<span class="copy-tag" title="Played on this copy">${esc(copy.rawName)}</span>` : ''}</div></td>
       <td class="num">${duration(s.playtime)}</td>
       <td class="num">${num(s.sum.attempts)}</td>
@@ -462,6 +509,7 @@ function notes(body, level) {
   const ta = panel.querySelector('textarea');
   ta.addEventListener('input', debounce(() => setCustom(level.key, { notes: ta.value }), 300));
   body.append(panel);
+  body.append(videosCard(level));
   const r = level.list;
   const pc = r?.source === 'pointercrate' ? r.entry : null;
   const ar = r?.aredl || (r?.source === 'aredl' ? r.entry : null);

@@ -1,5 +1,5 @@
 // Settings: appearance, gallery cards, data source, online extras, formats, backup.
-import { state, settings, setSettings, loadAll, fetchOnline, clearThumbCache, replacePrefs, DEFAULT_SETTINGS, on } from '../store.js';
+import { state, settings, setSettings, loadAll, fetchOnline, clearThumbCache, replacePrefs, DEFAULT_SETTINGS, diffIconUrl, on } from '../store.js';
 import { CARD_STATS } from './gallery.js';
 import { openSuggestions } from './links.js';
 import { SWATCHES } from './customize.js';
@@ -63,6 +63,10 @@ function render(keep = false) {
       ${row('Stats on cards', '', `<div class="checks">${CARD_STATS.map((c) => `<label class="check"><input type="checkbox" data-stat="${c.id}" ${s.cardStats[c.id] ? 'checked' : ''}>${icon(c.icon)}${esc(c.label)}</label>`).join('')}</div>`)}
       ${row('Best-% progress bar', '', toggle('showProgress', s.showProgress))}
       ${row('Difficulty badge', '', toggle('showDifficulty', s.showDifficulty))}
+      ${row('Use Geometry Dash difficulty faces', state.gdIcons?.available
+        ? 'Shows the in-game face instead of “Extreme Demon” etc. Taken from your own Geometry Dash install.'
+        : 'Needs Geometry Dash installed through Steam — the faces are read from your game files.',
+        `${state.gdIcons?.available ? `<span class="face-preview">${[3, 5, 7, 10].map((d) => `<img src="${diffIconUrl(d)}" alt="">`).join('')}</span>` : ''}<label class="switch"><input type="checkbox" data-k="diffIcons" ${s.diffIcons ? 'checked' : ''} ${state.gdIcons?.available ? '' : 'disabled'}><span></span></label>`)}
       ${row('List placement chip', 'Shows #position from the Demonlist or AREDL on cards.', toggle('showListRank', s.showListRank))}
       ${row('Creator name', '', toggle('showCreator', s.showCreator))}
       ${row('Summary tiles above the gallery', '', toggle('showSummary', s.showSummary))}

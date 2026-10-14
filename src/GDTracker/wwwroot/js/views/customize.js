@@ -1,8 +1,9 @@
 // Per-level customisation: thumbnail (file / paste / URL / drop / online), focal point, display name,
 // colour, tags, notes, favourite and hidden. Changes save as you make them.
-import { state, custom, setCustom, allTags, tagColor, levelInfo, LIST_NAMES, autoListRank, on } from '../store.js';
+import { state, custom, setCustom, allTags, tagColor, levelInfo, LIST_NAMES, autoListRank, removeAdded, on } from '../store.js';
 import { LENGTHS } from '../data.js';
 import { openLinkEditor } from './links.js';
+import { openFinder } from './finder.js';
 import { thumbInner, thumbSource } from '../thumbs.js';
 import { icon } from '../icons.js';
 import { openSheet, toast, promptDialog, tagField, switchHtml, ratingControl } from '../ui.js';
@@ -31,7 +32,16 @@ export function levelMenuItems(level, { open = false } = {}) {
       { label: 'View on GDBrowser', icon: 'globe', action: () => call('app.openUrl', { url: `https://gdbrowser.com/${level.lookupId}` }) },
     ] : []),
     ...(info?.creator ? [{ label: `More by ${info.creator}`, icon: 'search', action: () => call('app.openUrl', { url: `https://gdbrowser.com/search/${encodeURIComponent(info.creator)}?user` }) }] : []),
+    ...(level.added && !level.isGroup ? ['-', { label: 'Remove from my levels', icon: 'trash', danger: true, action: () => { removeAdded(level.key); if (location.hash.includes(encodeURIComponent(level.key))) location.hash = '#/'; toast('Removed'); } }] : []),
   ];
+}
+
+/** "AREDL #196 · matched by name" for the placement row. */
+export function rankLabel(r) {
+  if (!r) return '<span class="muted">Not on the Demonlist top 150 or AREDL</span>';
+  const pos = r.source === 'aredl' ? r.aredlPosition : r.position;
+  const how = r.by === 'name' ? 'matched by name' : r.by === 'chosen' ? 'chosen by you' : '';
+  return `${esc(LIST_NAMES[r.source])} #${pos} <span class="muted">${esc(r.entry?.name || '')}</span>${how ? ` <small>${how}</small>` : ''}`;
 }
 
 const adjValue = (adj, k) => {
@@ -93,11 +103,16 @@ export function openCustomize(level, { focus } = {}) {
           <div class="enjoy-slot"></div>
           <label class="lbl">Difficulty placement</label>
           <div class="placement">
-            <span class="auto-rank">${auto ? `${esc(LIST_NAMES[auto.source])} #${auto.source === 'aredl' ? auto.aredlPosition : auto.position}${auto.by === 'name' ? ' <small>matched by name</small>' : ''}` : '<span class="muted">Not on the Demonlist top 150 or AREDL</span>'}</span>
+            <span class="auto-rank">${rankLabel(auto)}</span>
             <span class="sp"></span>
             <input class="field num-field" data-f="listPos" type="number" min="1" step="1" value="${esc(c().listPos || '')}" placeholder="Own #" title="Your own placement (overrides the lists). Sorts like a list position: lower = harder.">
           </div>
+          <div class="row-btns placement-btns">
+            <button class="btn sm" data-a="pickList">${icon('search')}Pick the right list level…</button>
+            <button class="btn sm ghost" data-a="resetList" ${c().listId ? '' : 'hidden'}>Use automatic match</button>
+          </div>
           <label class="field-row switch-row"><span>Not a list level <small>(ignore any list match)</small></span>${switchHtml('noList', !!c().noList)}</label>
+          <label class="field-row switch-row"><span>${icon('checkCircle')}Completed <small>(outside Death Tracker)</small></span>${switchHtml('done', !!c().done)}</label>
           <label class="lbl">Length</label>
           <select class="field" data-f="length">
             <option value="">Automatic${level.lengthCat != null && !level.lengthManual ? ` (${LENGTHS[level.lengthCat]})` : ''}</option>
@@ -142,7 +157,18 @@ export function openCustomize(level, { focus } = {}) {
 
   q('.enjoy-slot').append(ratingControl(c().enjoy || 0, (v) => setCustom(key, { enjoy: v || null })));
   q('[data-f=listPos]').addEventListener('change', (e) => setCustom(key, { listPos: Math.max(0, Math.round(+e.target.value)) || null }));
-  q('input[name=noList]').addEventListener('change', (e) => setCustom(key, { noList: e.target.checked }));
+  const refreshRank = () => {
+    q('.auto-rank').innerHTML = rankLabel(autoListRank(state.levels.get(key) || level));
+    q('[data-a=resetList]').hidden = !c().listId;
+    q('input[name=noList]').checked = !!c().noList;
+  };
+  q('input[name=noList]').addEventListener('change', (e) => { setCustom(key, { noList: e.target.checked }); refreshRank(); });
+  q('input[name=done]').addEventListener('change', (e) => setCustom(key, { done: e.target.checked }));
+  q('[data-a=pickList]').onclick = () => openFinder({
+    query: level.rawName,
+    pick: (entry) => { setCustom(key, { listId: +entry.levelId, noList: false }); refreshRank(); toast(`Matched to ${entry.name}`); },
+  });
+  q('[data-a=resetList]').onclick = () => { setCustom(key, { listId: null }); refreshRank(); };
   q('[data-f=length]').addEventListener('change', (e) => setCustom(key, { length: e.target.value === '' ? null : +e.target.value }));
   q('[data-a=links]').onclick = () => { s.close(); openLinkEditor(level); };
   el.querySelectorAll('[data-adj]').forEach((inp) => inp.addEventListener('change', () => {

@@ -1,6 +1,6 @@
-// App shell: startup, theming, top bar and hash routing (#/ · #/level/<key>[/tab] · #/activity · #/settings).
+// App shell: startup, theming, top bar and hash routing (#/ · #/level/<key>[/tab] · #/stats · #/lists · #/settings).
 import { call, hasHost } from './rpc.js';
-import { state, settings, initPrefs, loadAll, on, emit } from './store.js';
+import { state, settings, initPrefs, loadAll, loadIcons, on, emit } from './store.js';
 import { setFormats, debounce, hexToRgb, inkOn } from './util.js';
 import { icon } from './icons.js';
 import { closeMenu, closePopover, sheetOpen, topSheet, toast } from './ui.js';
@@ -8,7 +8,7 @@ import { refreshThumbs, keysForOnlineId } from './thumbs.js';
 import { imgUrl } from './images.js';
 import { mountGallery, unmountGallery } from './views/gallery.js';
 import { mountLevel, unmountLevel } from './views/level.js';
-import { mountActivity, unmountActivity } from './views/activity.js';
+import { mountStats, unmountStats } from './views/stats.js';
 import { mountSettings, unmountSettings, FONTS } from './views/settings.js';
 import { mountLists, unmountLists } from './views/lists.js';
 
@@ -61,7 +61,7 @@ function topbar() {
     <nav>
       <a href="#/" data-nav="levels">${icon('grid')}<span>Levels</span></a>
       <a href="#/lists" data-nav="lists">${icon('trophy')}<span>Lists</span></a>
-      <a href="#/activity" data-nav="activity">${icon('chart')}<span>Activity</span></a>
+      <a href="#/stats" data-nav="stats">${icon('chart')}<span>Statistics</span></a>
       <a href="#/settings" data-nav="settings">${icon('gear')}<span>Settings</span></a>
     </nav>
     <span class="sp"></span>
@@ -106,10 +106,10 @@ function route() {
     updateNav('levels');
     mountLevel(page, decodeURIComponent(parts[1]), parts[2]);
     current = unmountLevel;
-  } else if (parts[0] === 'activity') {
-    updateNav('activity');
-    mountActivity(page);
-    current = unmountActivity;
+  } else if (parts[0] === 'stats' || parts[0] === 'activity') {
+    updateNav('stats');
+    mountStats(page);
+    current = unmountStats;
   } else if (parts[0] === 'lists') {
     updateNav('lists');
     mountLists(page);
@@ -184,6 +184,7 @@ async function start() {
   state.detectedFolder = init.detectedFolder;
   state.modInstalled = init.modInstalled;
   initPrefs(init.prefs);
+  loadIcons();
   applyTheme();
   updateLive();
   route();

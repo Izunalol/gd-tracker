@@ -1,5 +1,5 @@
 // Community lists (Pointercrate Demonlist, AREDL) with your own progress on each level.
-import { state, settings, setSettings, displayName, isCompleted, loadLists, on } from '../store.js';
+import { state, settings, setSettings, displayName, isCompleted, loadLists, addLevel, on } from '../store.js';
 import { meter } from '../charts.js';
 import { icon } from '../icons.js';
 import { h, segmented, toast } from '../ui.js';
@@ -68,15 +68,16 @@ function render(keep = false) {
   const scopeAll = levels;
   const q = query.trim().toLowerCase();
   levels = levels.filter(({ l, e }) => {
-    if (s.listShow === 'played' && !e) return false;
+    const playedIt = e && (e.sum.attempts > 0 || isCompleted(e));
+    if (s.listShow === 'played' && !playedIt) return false;
     if (s.listShow === 'completed' && !(e && isCompleted(e))) return false;
-    if (s.listShow === 'unplayed' && e) return false;
-    if (s.listShow === 'progress' && !(e && !isCompleted(e))) return false;
+    if (s.listShow === 'unplayed' && playedIt) return false;
+    if (s.listShow === 'progress' && !(playedIt && !isCompleted(e))) return false;
     return !q || [l.name, l.publisher, l.verifier, `#${l.position}`, ...(l.tags || [])].join(' ').toLowerCase().includes(q);
   });
 
   // Headline numbers over the whole list (not the filter).
-  const played = scopeAll.filter((x) => x.e);
+  const played = scopeAll.filter((x) => x.e && (x.e.sum.attempts > 0 || isCompleted(x.e)));
   const beaten = played.filter((x) => isCompleted(x.e));
   const hardest = beaten[0];
   const closest = played.filter((x) => !isCompleted(x.e)).sort((a, b) => (b.e.sum.best ?? 0) - (a.e.sum.best ?? 0))[0];
@@ -130,7 +131,7 @@ function render(keep = false) {
     rows.push(`<tr class="${done ? 'win' : ''} ${e ? 'mine' : ''}" data-i="${data.levels.indexOf(l)}" ${e ? `data-key="${esc(e.key)}"` : ''}>
       <td class="pos">#${l.position}</td>
       <td class="name"><div class="row-name"><div class="thumb mini">${thumb}</div><div><div class="rn-title">${esc(l.name)}${done ? doneTick('Completed', 'sm') : ''}</div><div class="rn-sub">${sub}</div></div></div></td>
-      <td class="prog">${e ? (done ? `<span class="beat">${e.sum.completions > 1 ? `${e.sum.completions}× ` : ''}completed</span>` : (best != null ? `<span class="best">${best}%</span>${meter(best / 100)}` : '<span class="muted">Practice only</span>')) : '<span class="muted">Not played</span>'}</td>
+      <td class="prog">${e ? (done ? `<span class="beat">${e.sum.completions > 1 ? `${e.sum.completions}× ` : ''}completed</span>` : (best != null ? `<span class="best">${best}%</span>${meter(best / 100)}` : `<span class="muted">${e.sum.attempts ? 'Practice only' : 'Added · not played yet'}</span>`)) : `<span class="muted">Not played</span>${l.levelId ? ` <button class="btn sm ghost add-btn" data-add="${data.levels.indexOf(l)}" title="Add to your levels (to rate it, link videos or mark it completed)">${icon('plus')}Add</button>` : ''}`}</td>
       <td class="num">${e ? num(e.attempts) : ''}</td>
       <td class="num">${e ? duration(e.playtime) : ''}</td>
       <td class="num">${tab === 'pointercrate' ? (l.requirement != null ? `${l.requirement}%` : '') : l.points != null ? num(l.points) : ''}</td>
@@ -142,6 +143,14 @@ function render(keep = false) {
       <th class="num">${tab === 'pointercrate' ? 'List %' : 'Points'}</th><th class="num">${tab === 'aredl' ? '<span title="Community enjoyment (EDEL), out of 100">Enjoy</span>' : ''}</th></tr></thead>
     <tbody>${rows.join('') || '<tr><td colspan="7" class="muted">No levels match.</td></tr>'}</tbody></table></div>`);
   table.addEventListener('click', (ev) => {
+    const add = ev.target.closest('[data-add]');
+    if (add) {
+      ev.stopPropagation();
+      const l = data.levels[+add.dataset.add];
+      addLevel({ id: +l.levelId, name: l.name, creator: l.publisher, difficulty: 10 });
+      toast(`Added ${l.name} to your levels`);
+      return;
+    }
     const tr = ev.target.closest('tr[data-i]');
     if (!tr) return;
     if (tr.dataset.key) { location.hash = `#/level/${encodeURIComponent(tr.dataset.key)}`; return; }
@@ -149,6 +158,6 @@ function render(keep = false) {
     call('app.openUrl', { url: LISTS[tab].url(l) });
   });
   root.append(table);
-  root.append(h(`<p class="about">Data from ${esc(LISTS[tab].site)}. Your levels are matched by level ID${s.matchListByName ? ', and editor or start-pos copies by name' : ''}. Click a level you haven't played to open it on the list's website.</p>`));
+  root.append(h(`<p class="about">Data from ${esc(LISTS[tab].site)}. Your levels are matched by level ID${s.matchListByName ? ', and editor or start-pos copies by name' : ''}. Click a level you haven't played to open it on the list's website, or Add it to your levels.</p>`));
   if (keep) scroller.scrollTop = top;
 }

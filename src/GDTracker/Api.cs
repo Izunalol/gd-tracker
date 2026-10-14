@@ -88,6 +88,23 @@ public sealed class Api
                 bool hd = Json.Get(p, "hd", false);
                 return await Task.Run(() => GdOnline.Thumb(id, hd));
             }
+            case "online.search":
+                return await GdOnline.SearchText(Json.Get(p, "query", ""), Json.Get(p, "page", 0));
+            case "gd.icons":
+                return await Task.Run(GdIcons.Ensure);
+            case "web.oembed":
+            {
+                // Video title/channel for a pasted YouTube link (the page can't fetch it itself: CORS).
+                var url = Json.Get(p, "url", "");
+                if (!Uri.TryCreate(url, UriKind.Absolute, out var u) || !(u.Host.EndsWith("youtube.com") || u.Host == "youtu.be")) return null;
+                try
+                {
+                    var text = await WebFetch.FetchText("https://www.youtube.com/oembed?format=json&url=" + Uri.EscapeDataString(url));
+                    using var doc = JsonDocument.Parse(text);
+                    return new { title = doc.RootElement.GetProperty("title").GetString(), author = doc.RootElement.TryGetProperty("author_name", out var a) ? a.GetString() : null };
+                }
+                catch { return null; }
+            }
             case "lists.get":
                 return await DemonLists.Get(Json.Get(p, "name", ""), Json.Get(p, "force", false), Json.Get(p, "online", true));
             case "thumbs.clearCache":

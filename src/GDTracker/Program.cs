@@ -2,8 +2,11 @@ namespace GDTracker;
 
 static class Program
 {
-    const string MutexName = "GDTracker.SingleInstance";
-    const string ShowEventName = "GDTracker.Show";
+    // One instance per data folder, so a test copy with GDTRACKER_DATA can run next to the real one.
+    static readonly string Suffix = Convert.ToHexString(
+        System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(AppPaths.Root.ToLowerInvariant())))[..12];
+    static readonly string MutexName = "GDTracker.SingleInstance." + Suffix;
+    static readonly string ShowEventName = "GDTracker.Show." + Suffix;
 
     [STAThread]
     static void Main()

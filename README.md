@@ -8,13 +8,16 @@ A readable dashboard for the data the **Death Tracker** Geode mod (by abb2k, `el
 - **Level page** — headline numbers, deaths per percent (count, death rate or reach curve), the hardest parts of the level, best per session, where your playtime went, every session (expandable), practice / start-pos runs grouped by start position, a per-percent table and your notes. Any chart can be narrowed to a single session.
 - **Lists** — the Pointercrate Demonlist and AREDL with your progress on every level: completed, best %, attempts and playtime, plus what you've beaten and what you're closest to.
 - **Linked copies** — start-pos copies, editor copies and re-uploads of the same level can be linked into one card with combined stats and one thumbnail. Likely copies are detected automatically (same name once "startpos"/"copy"-style suffixes are removed, or linked in Death Tracker) and offered for review.
-- **Activity** — playtime per day or week, a 12-month calendar, your most played levels and the latest sessions across all levels.
+- **Statistics** — your career (levels and demons beaten, hardest completions, completions by difficulty and over time, most attempts to beat, closest to beating, highest rated) and activity over a chosen range (playtime per day or week, a 12-month calendar, most played levels, recent sessions).
+- **Add levels you haven't played** — search the GD servers (like the in-game search) or the Demonlist / AREDL and add levels to rate them, link videos or mark them completed. Death Tracker data takes over once you play them.
+- **Videos** — link YouTube videos to a level as your completion or a showcase; titles fill in automatically and a video can become the level's thumbnail.
 - **Live refresh** — the app watches the Death Tracker folder and updates when the mod saves (on leaving a level).
 
 ## Customisation
 
 - Per level: custom thumbnail (pick a file, paste, use a URL, or drop an image onto a card), focal point, display name, enjoyment rating (half stars), your own difficulty placement (marked as manual), length, colour, tags, notes, favourite and hide. A tucked-away "Adjust stats" section adds attempts, playtime, runs or a best % from before you installed Death Tracker.
-- App-wide: dark/light/system theme, accent colour, font, corner roundness, density, background (plain, accent glow or your own image with blur/dim), card style, shape, size and which stats appear on cards, time and date formats, and what counts as playtime (respawn and pause time).
+- List placements can be corrected per level: "Not this level", or pick the right Demonlist/AREDL entry. Levels beaten outside Death Tracker can be marked completed.
+- App-wide: dark/light/system theme, accent colour, font, corner roundness, density, background (plain, accent glow or your own image with blur/dim), card style, shape, size and which stats appear on cards, Geometry Dash difficulty faces instead of names (read from your own GD install, never shipped with the app), time and date formats, and what counts as playtime (respawn and pause time).
 
 ## Data
 

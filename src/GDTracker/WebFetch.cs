@@ -75,6 +75,13 @@ public static class WebFetch
         return null;
     }
 
+    /// <summary>Plain GET returning the body as text (small JSON endpoints).</summary>
+    public static async Task<string> FetchText(string url)
+    {
+        var (bytes, _, _) = await Get(Check(url), "application/json,*/*;q=0.8", 2 * 1024 * 1024);
+        return System.Text.Encoding.UTF8.GetString(bytes);
+    }
+
     /// <summary>Downloads an image. If the link turns out to be a web page, its preview image (og:image) is used instead.</summary>
     public static async Task<object> DownloadImage(string url)
     {

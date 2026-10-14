@@ -79,6 +79,44 @@ public static class GdOnline
         finally { InfoLock.Release(); }
     }
 
+    /// <summary>Searches the GD servers like the in-game search (a number finds that level ID). Results are cached as level info.</summary>
+    public static async Task<List<LevelInfo>> SearchText(string query, int page)
+    {
+        query = query.Trim();
+        if (query.Length == 0) return new();
+        using var req = new HttpRequestMessage(HttpMethod.Post, GdSearch)
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["secret"] = "Wmfd2893gb7",
+                ["type"] = "0",
+                ["str"] = query,
+                ["page"] = Math.Max(0, page).ToString(),
+            }),
+        };
+        req.Headers.TryAddWithoutValidation("User-Agent", "");
+        using var res = await Http.SendAsync(req);
+        var body = (await res.Content.ReadAsStringAsync()).Trim();
+        if (body.StartsWith("error code", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The GD servers are rate-limiting searches; try again in a minute.");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        // Keep server order (the search ranks by relevance).
+        var order = body.Split('#')[0].Split('|').Select(l => KeyValues(l, ":").GetValueOrDefault("1")).ToList();
+        var found = Parse(body, now);
+        var list = order.Select(id => long.TryParse(id, out var v) && found.TryGetValue(v, out var info) ? info : null).Where(x => x != null).Cast<LevelInfo>().ToList();
+        if (list.Count > 0)
+        {
+            await InfoLock.WaitAsync();
+            try
+            {
+                var cache = Cached();
+                foreach (var i in list) cache[i.Id.ToString()] = i;
+                Json.Write(AppPaths.LevelInfo, cache);
+            }
+            finally { InfoLock.Release(); }
+        }
+        return list;
+    }
+
     static async Task<string> Search(IEnumerable<long> ids)
     {
         using var req = new HttpRequestMessage(HttpMethod.Post, GdSearch)

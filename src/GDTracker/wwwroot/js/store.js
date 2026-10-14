@@ -25,6 +25,7 @@ export const DEFAULT_SETTINGS = {
   cardStats: { attempts: true, playtime: true, best: true, lastPlayed: true, from0: false, sessions: false, completions: false, practice: false, enjoyment: false, length: false },
   showProgress: true,
   showDifficulty: true,
+  diffIcons: false,
   showListRank: true,
   showCreator: true,
   sort: 'recent',
@@ -65,8 +66,9 @@ export const DEFAULT_SETTINGS = {
 };
 
 export const state = {
-  prefs: { version: 1, settings: { ...DEFAULT_SETTINGS }, levels: {}, tagColors: {}, links: [], dismissedLinks: [] },
+  prefs: { version: 1, settings: { ...DEFAULT_SETTINGS }, levels: {}, tagColors: {}, links: [], dismissedLinks: [], extra: {} },
   raw: new Map(), // level key → level as Death Tracker has it
+  rawAll: new Map(), // raw + levels you added from search
   levels: new Map(), // entity key → what the app shows (linked copies merged, manual numbers added)
   memberOf: new Map(), // raw level key → entity key
   folder: '',
@@ -80,6 +82,7 @@ export const state = {
   hdThumbs: {}, // id → url | null
   lists: { pointercrate: null, aredl: null }, // { fetched, levels, error }
   listIndex: { byId: new Map(), byName: new Map() },
+  gdIcons: null, // { available, icons: { "10": url } } cut from your GD install
   version: '',
   dataFolder: '',
   systemDark: true,
@@ -117,6 +120,7 @@ export function initPrefs(json) {
       tagColors: p.tagColors || {},
       links: Array.isArray(p.links) ? p.links : [],
       dismissedLinks: Array.isArray(p.dismissedLinks) ? p.dismissedLinks : [],
+      extra: p.extra && typeof p.extra === 'object' ? p.extra : {},
     };
   } catch (e) { console.error('bad prefs', e); }
 }
@@ -151,7 +155,7 @@ export function setCustom(key, patch) {
   else delete state.prefs.levels[key];
   persist();
   // Numbers that feed the stats need the entity rebuilt.
-  if (['adjust', 'listPos', 'noList', 'length'].some((k) => k in patch)) { rebuildOne(key); emit('data', { keys: [key] }); }
+  if (['adjust', 'listPos', 'noList', 'listId', 'length', 'done'].some((k) => k in patch)) { rebuildOne(key); emit('data', { keys: [key] }); }
   emit('custom', key);
 }
 
@@ -184,7 +188,7 @@ export const linkOf = (key) => state.prefs.links.find((g) => g.members.includes(
  * customisation the main level lacks is taken from the others so no thumbnail or tag is lost.
  */
 export function linkLevels(keys, primary) {
-  keys = [...new Set(keys)].filter((k) => state.raw.has(k));
+  keys = [...new Set(keys)].filter((k) => state.rawAll.has(k));
   if (keys.length < 2) return;
   const groups = state.prefs.links.filter((g) => g.members.some((m) => keys.includes(m)));
   const members = [...new Set([...groups.flatMap((g) => g.members), ...keys])];
@@ -325,25 +329,62 @@ const opts = () => ({ playtimeDead: settings().playtimeDead, playtimePaused: set
 /** Recomputes every entity from the raw levels, links, manual adjustments and lists. */
 export function rebuild() {
   for (const l of state.raw.values()) applyPlaytime(l, opts());
+  const src = new Map(state.raw);
+  for (const [k, x] of Object.entries(state.prefs.extra)) if (!src.has(k)) src.set(k, addedLevel(k, x));
+  state.rawAll = src;
   const levels = new Map();
   const memberOf = new Map();
   const used = new Set();
   for (const g of state.prefs.links) {
-    const members = g.members.filter((k) => state.raw.has(k) && !used.has(k));
+    const members = g.members.filter((k) => src.has(k) && !used.has(k));
     if (!members.length) continue;
     const primaryKey = members.includes(g.primary) ? g.primary : members[0];
-    const primary = state.raw.get(primaryKey);
-    const others = members.filter((k) => k !== primaryKey).map((k) => state.raw.get(k));
+    const primary = src.get(primaryKey);
+    const others = members.filter((k) => k !== primaryKey).map((k) => src.get(k));
     levels.set(primaryKey, finish(makeEntity(primary, others, opts())));
     for (const k of members) { memberOf.set(k, primaryKey); used.add(k); }
   }
-  for (const [k, l] of state.raw) {
+  for (const [k, l] of src) {
     if (used.has(k)) continue;
     levels.set(k, finish(makeEntity(l, [], opts())));
     memberOf.set(k, k);
   }
   state.levels = levels;
   state.memberOf = memberOf;
+}
+
+/**
+ * A level you added from search but haven't played with Death Tracker: an empty level so it can be rated,
+ * linked to videos, marked completed or given manual stats. Real Death Tracker data replaces it once played.
+ */
+function addedLevel(key, x) {
+  const l = buildLevel({ key, meta: { levelName: x.name, difficulty: x.difficulty ?? 0, attempts: 0 }, general: null, sessions: [], mtime: 0 }, opts());
+  l.added = true;
+  l.addedAt = x.addedAt || 0;
+  return l;
+}
+
+/** Adds a level found by search (GD servers or a list) to your levels. */
+export function addLevel(info) {
+  const key = String(info.id);
+  if (state.rawAll.has(key)) return key;
+  state.prefs.extra[key] = { name: info.name, difficulty: info.difficulty ?? 0, addedAt: Math.floor(Date.now() / 1000) };
+  if (info.creator && !state.info[info.id]) state.info[info.id] = { ...info, fetched: Math.floor(Date.now() / 1000) };
+  persist();
+  rebuild();
+  emit('data');
+  fetchOnline();
+  return key;
+}
+
+export function removeAdded(key) {
+  if (!state.prefs.extra[key]) return;
+  delete state.prefs.extra[key];
+  state.prefs.links.forEach((g) => (g.members = g.members.filter((m) => m !== key)));
+  state.prefs.links = state.prefs.links.filter((g) => g.members.length > 1);
+  persist();
+  rebuild();
+  emit('data');
 }
 
 function rebuildOne(key) {
@@ -358,6 +399,11 @@ function rebuildOne(key) {
 function finish(e) {
   const c = custom(e.key);
   applyAdjust(e, c.adjust);
+  // "I beat this before Death Tracker" (or on another device).
+  if (c.done && !e.sum.completions) {
+    e.sum = { ...e.sum, completions: 1, best: 100 };
+    e.manualComplete = true;
+  }
   e.list = listRank(e, c);
   const info = e.lookupId ? state.info[e.lookupId] : null;
   const aredl = e.list?.aredl;
@@ -378,6 +424,8 @@ function listRank(e, c) {
   if (c.noList) return null;
   if (c.listPos) return { source: 'manual', position: +c.listPos };
   const idx = state.listIndex;
+  // You told us exactly which list level this is.
+  if (c.listId && idx.byId.get(+c.listId)) return placement(idx.byId.get(+c.listId), 'chosen');
   const ids = e.members.map((m) => m.lookupId).filter(Boolean);
   if (e.lookupId) ids.unshift(e.lookupId);
   let hit = null, by = 'id';
@@ -393,6 +441,10 @@ function listRank(e, c) {
     }
   }
   if (!hit) return null;
+  return placement(hit, by);
+}
+
+function placement(hit, by) {
   const pc = hit.pointercrate, ar = hit.aredl;
   if (pc && pc.position <= 150) return { source: 'pointercrate', position: pc.position, by, entry: pc, aredl: ar };
   if (ar && !ar.legacy) return { source: 'aredl', position: Math.max(151, ar.position), aredlPosition: ar.position, by, entry: ar, aredl: ar };
@@ -400,7 +452,7 @@ function listRank(e, c) {
 }
 
 /** List placement ignoring the user's own override (shown next to the manual field). */
-export const autoListRank = (e) => listRank(e, {});
+export const autoListRank = (e) => listRank(e, { listId: custom(e.key).listId });
 
 function indexLists() {
   const byId = new Map(), byName = new Map();
@@ -457,6 +509,20 @@ onHost('dt.changed', ({ keys, all }) => {
   reloadKeys(keys || [], all).catch((e) => console.error(e));
 });
 
+// ---------------------------------------------------------------- GD difficulty faces
+
+export async function loadIcons() {
+  try { state.gdIcons = await call('gd.icons'); } catch { state.gdIcons = { available: false, icons: {} }; }
+  emit('prefs');
+}
+
+/** URL of the GD face for a difficulty value, or null when the icons aren't available. */
+export function diffIconUrl(d) {
+  const icons = state.gdIcons?.icons;
+  const u = icons && icons[d === -1 ? 'auto' : String(d)];
+  return u ? 'https://data.gdtracker/' + u : null;
+}
+
 // ---------------------------------------------------------------- demon lists
 
 let listsBusy = null;
@@ -487,7 +553,7 @@ export async function fetchOnline(force = false) {
   }
   fetchThumbs();
   if (!settings().online || onlineBusy) return;
-  const ids = [...new Set([...state.raw.values()].map((l) => l.lookupId).filter((id) => id > 0))];
+  const ids = [...new Set([...state.rawAll.values()].map((l) => l.lookupId).filter((id) => id > 0))];
   const missing = force ? ids : ids.filter((id) => !state.info[id]);
   if (!missing.length) return;
   onlineBusy = true;

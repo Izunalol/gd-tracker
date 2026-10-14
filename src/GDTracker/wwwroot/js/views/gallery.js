@@ -1,5 +1,5 @@
 // Home page: every tracked level as a card (or a table row), with search, sort, filters and grouping.
-import { state, settings, setSettings, custom, setCustom, displayName, levelInfo, levelDifficulty, pctLabel, isCompleted, allTags, tagColor, hardness, linkSuggestions, LIST_NAMES, on } from '../store.js';
+import { state, settings, setSettings, custom, setCustom, displayName, levelInfo, levelDifficulty, pctLabel, isCompleted, allTags, tagColor, hardness, linkSuggestions, LIST_NAMES, diffIconUrl, on } from '../store.js';
 import { diffInfo, DIFF_ORDER, TYPES, LENGTHS } from '../data.js';
 import { thumbBox } from '../thumbs.js';
 import { meter } from '../charts.js';
@@ -9,6 +9,7 @@ import { esc, num, compact, duration, when, absDate, collator, debounce, plural,
 import { dragHasImages, extractSources, storeSource } from '../images.js';
 import { levelMenuItems } from './customize.js';
 import { openSuggestions } from './links.js';
+import { openFinder } from './finder.js';
 import { call } from '../rpc.js';
 
 export const SORTS = [
@@ -97,7 +98,8 @@ export function visibleLevels() {
     if (c.hidden && !s.showHidden) return false;
     if (s.filterType !== 'all' && l.type !== s.filterType) return false;
     if (s.filterStatus === 'completed' && !isCompleted(l)) return false;
-    if (s.filterStatus === 'progress' && isCompleted(l)) return false;
+    if (s.filterStatus === 'progress' && (isCompleted(l) || !l.sum.attempts)) return false;
+    if (s.filterStatus === 'unplayed' && (l.sum.attempts || isCompleted(l))) return false;
     if (s.filterFav && !c.fav) return false;
     if (s.filterDiff.length && !s.filterDiff.includes(levelDifficulty(l))) return false;
     if (s.filterTags.length && !s.filterTags.some((t) => (c.tags || []).includes(t))) return false;
@@ -238,8 +240,17 @@ export function rankChip(level, cls = '') {
   const r = level.list;
   if (!r) return '';
   const pos = r.source === 'aredl' ? r.aredlPosition : r.position;
-  const tip = r.source === 'manual' ? 'Your own placement' : `${LIST_NAMES[r.source]} #${pos}${r.by === 'name' ? ' (matched by name)' : ''}`;
-  return `<span class="rank-chip ${r.source} ${cls}" title="${esc(tip)}">${r.source === 'manual' ? icon('pencil') : `<b>${r.source === 'pointercrate' ? 'DL' : 'AREDL'}</b>`}#${pos}</span>`;
+  const tip = r.source === 'manual' ? 'Your own placement' : `${LIST_NAMES[r.source]} #${pos}${r.by === 'name' ? ' (matched by name)' : r.by === 'chosen' ? ' (chosen by you)' : ''}`;
+  return `<span class="rank-chip ${r.source} ${rankTier(r)} ${cls}" title="${esc(tip)}">${r.source === 'manual' ? icon('pencil') : `<b>${r.source === 'pointercrate' ? 'DL' : 'AREDL'}</b>`}#${pos}</span>`;
+}
+
+/** Colour tier for a placement: top 10, main list, extended list, then AREDL bands. */
+export function rankTier(r) {
+  if (!r) return '';
+  if (r.source === 'manual') return 't-manual';
+  if (r.source === 'pointercrate') return r.position <= 10 ? 't-top' : r.position <= 75 ? 't-main' : 't-ext';
+  const p = r.aredlPosition;
+  return p <= 300 ? 't-a1' : p <= 750 ? 't-a2' : 't-a3';
 }
 
 /** The glowing completion tick. */
@@ -258,6 +269,7 @@ function toolbar(shown, total) {
       <button class="btn ghost icon-only" data-a="dir" title="${s.sortDir === 'asc' ? 'Ascending' : 'Descending'}">${icon(s.sortDir === 'asc' ? 'arrowUp' : 'arrowDown')}</button>
     </div>
     <button class="btn ghost ${s.groupBy !== 'none' ? 'active' : ''}" data-a="group">${icon('layers')}<span>${s.groupBy === 'none' ? 'Group' : esc(GROUPS.find((g) => g.id === s.groupBy).label)}</span></button>
+    <button class="btn ghost" data-a="find" title="Find a level you haven't played with Death Tracker">${icon('plus')}<span>Add level</span></button>
     <span class="spacer"></span>
     <span class="count">${shown === total ? plural(total, 'level') : `${num(shown)} of ${plural(total, 'level')}`}</span>
     ${s.view === 'grid' ? `<input class="size-slider" type="range" min="180" max="480" step="10" value="${s.cardSize}" title="Card size">` : ''}
@@ -270,6 +282,7 @@ function toolbar(shown, total) {
   const input = el.querySelector('input[type=search]');
   input.addEventListener('input', debounce(() => { query = input.value; renderKeepFocus(); }, 120));
   el.querySelector('[data-a=filter]').onclick = (e) => filterMenu(e.currentTarget);
+  el.querySelector('[data-a=find]').onclick = () => openFinder({ query: query.trim() });
   el.querySelector('[data-a=sort]').onclick = (e) => showMenu(SORTS.map((x) => ({
     label: x.label, checked: x.id === s.sort,
     action: () => setSettings({ sort: x.id, sortDir: x.id === s.sort ? s.sortDir : x.dir }),
@@ -329,6 +342,7 @@ function filterMenu(anchor) {
     { label: 'Any', checked: s.filterStatus === 'all', action: () => setSettings({ filterStatus: 'all' }) },
     { label: 'Completed', checked: s.filterStatus === 'completed', action: () => setSettings({ filterStatus: 'completed' }) },
     { label: 'In progress', checked: s.filterStatus === 'progress', action: () => setSettings({ filterStatus: 'progress' }) },
+    { label: 'Not played yet', checked: s.filterStatus === 'unplayed', action: () => setSettings({ filterStatus: 'unplayed' }) },
     '-',
     { label: 'Difficulty', submenu: [
       ...DIFF_ORDER.slice().reverse().map((d) => ({
@@ -371,6 +385,9 @@ export function diffChip(level, cls = '') {
   const d = diffInfo(diff);
   const info = levelInfo(level);
   const stars = info && !info.missing && info.stars ? `<span class="stars">${info.stars}${icon('starFill')}</span>` : '';
+  // Compact mode: the in-game face (cut from your own GD install) instead of the name.
+  const face = settings().diffIcons ? diffIconUrl(diff) : null;
+  if (face) return `<span class="diff face ${cls}" title="${esc(d.name)}"><img src="${face}" alt="${esc(d.name)}" draggable="false">${stars}</span>`;
   return `<span class="diff ${cls}" style="--d:${d.color}"><i></i>${esc(d.name)}${stars}</span>`;
 }
 
@@ -380,7 +397,8 @@ function card(l) {
   const info = levelInfo(l);
   const best = l.sum.best ?? 0;
   const done = isCompleted(l);
-  const sub = s.showCreator && info?.creator ? `by ${esc(info.creator)}` : l.type === 'editor' ? 'Editor level' : l.type === 'main' ? 'Main level' : '';
+  const sub = l.added && !l.sum.attempts && !l.isGroup && !done ? `${info?.creator && s.showCreator ? `by ${esc(info.creator)} · ` : ''}<span class="not-played">Not played yet</span>`
+    : s.showCreator && info?.creator ? `by ${esc(info.creator)}` : l.type === 'editor' ? 'Editor level' : l.type === 'main' ? 'Main level' : '';
   const creator = sub || l.isGroup ? `<span>${sub}${l.isGroup ? `${sub ? ' · ' : ''}<span class="linked" title="${esc(l.members.map((m) => m.rawName).join(', '))}">${icon('link')}${l.members.length} copies</span>` : ''}</span>` : '';
   const stats = CARD_STATS.filter((x) => s.cardStats[x.id]).map((x) =>
     `<span class="cs" title="${esc(x.label)}">${icon(x.icon)}${esc(x.val(l))}</span>`).join('');
